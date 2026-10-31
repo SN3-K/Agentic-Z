@@ -20,14 +20,14 @@ Follow `skills/_shared/dayz-conventions.md`.
 3. Verifies these exist:
    - `Bin\ObjectBuilder\ObjectBuilder.exe`
    - `Bin\ObjectBuilder\ObjectBuilder_defaultSettings.reg`
-4. Checks `HKCU\Software\Bohemia Interactive\DayZ Tools\Object Builder\CConfig` for an existing config.
+4. Checks `HKCU\Software\Bohemia Interactive\DayZ Tools\Object Builder\CConfig` for an existing config. On Linux this is the registry of the DayZ Tools Proton prefix (see "On Linux").
 5. If `CConfig` is missing (or with `--force`, after confirmation): checks that every key the `.reg` touches is under `HKEY_CURRENT_USER` (refuses otherwise, before touching the registry). Then, whenever the parent Object Builder key already exists, it runs `reg export` on it to `.claude/local-memory/objectbuilder-backup-<YYYYMMDD-HHMMSS>.reg` in the project and prints that path; nothing is imported if the export fails.
    - **Partial tree** (parent key present, `CConfig` missing, with or without `--force`): the defaults are merged over the existing key with no confirmation and no delete, so saved `MainFrame-*` layouts and `HistoryPaths` stay.
    - **Forced reset** (`--force` with `CConfig` present): the key is deleted with `reg delete ... /f` (stops if that fails) so the import starts from an empty tree.
    - **Empty registry**: there is nothing to back up, so the defaults are imported straight away.
 
    It then runs `reg import` on the `.reg` and verifies `CConfig` now exists. If that import fails or `CConfig` is still missing, and a backup was taken, it clears the key, imports the backup, and reports whether your previous settings came back (if that restore also fails, it prints the `reg import` command to run by hand).
-6. Unless `--no-prefs` is given, sets four preferred flags under `CConfig`, writing only the ones not already on: View background LOD, background LOD in the 3D preview, background LOD in the UV editor (all `"1"`), and Direct3D renderer by default (`"On"`). If `CConfig` cannot be opened for writing or a write fails, it prints a `[FAIL]` line with the Windows error and exits 1.
+6. Unless `--no-prefs` is given, sets four preferred flags under `CConfig`, writing only the ones not already on: View background LOD, background LOD in the 3D preview, background LOD in the UV editor (all `"1"`), and Direct3D renderer by default (`"On"`). If `CConfig` cannot be opened for writing or a write fails, it prints a `[FAIL]` line naming the error (on Linux the failed `reg add`) and exits 1.
 
 ## How to run
 
@@ -47,9 +47,19 @@ Without `--no-prefs`, every run turns the four flags back on. Use `--no-prefs` o
 python "<skill-dir>\setup.py" --force
 ```
 
-On an already-configured machine `--force` asks `[y/N]`, backs up the current settings, deletes the whole Object Builder key (including saved `MainFrame-*` toolbar layouts, `HistoryPaths` recent files, and any value the shipped `.reg` doesn't set), then imports the defaults into the empty tree. `--force` only resets a key that already has `CConfig`: on a partial tree (Object Builder key present, `CConfig` missing) it changes nothing, and the defaults are merged over the saved values after a backup, exactly as without `--force`. If importing the defaults fails, it restores the backup on its own. To undo a reset that succeeded, run `reg import` on the backup file it printed. The backup goes to `.claude/local-memory/` in the project that `/dayz-init` resolves (`CLAUDE_PROJECT_DIR`, else the nearest folder at or above the current one with the `/dayz-init` cache, else the clone that holds the skill scripts when that clone has the cache), so running from a mod subfolder still lands it in the project. Without a terminal (an agent's Bash call) it refuses unless `--yes` is also given, so get the user's go-ahead first and then run `--force --yes`. `--no-prefs` combines with `--force`.
+On an already-configured machine `--force` asks `[y/N]`, backs up the current settings, deletes the whole Object Builder key (including saved `MainFrame-*` toolbar layouts, `HistoryPaths` recent files, and any value the shipped `.reg` doesn't set), then imports the defaults into the empty tree. `--force` only resets a key that already has `CConfig`: on a partial tree (Object Builder key present, `CConfig` missing) it changes nothing, and the defaults are merged over the saved values after a backup, exactly as without `--force`. If importing the defaults fails, it restores the backup on its own. To undo a reset that succeeded, run `reg import` on the backup file it printed (on Linux the printed restore line is the Proton command to run). The backup goes to `.claude/local-memory/` in the project that `/dayz-init` resolves (`CLAUDE_PROJECT_DIR`, else the nearest folder at or above the current one with the `/dayz-init` cache, else the clone that holds the skill scripts when that clone has the cache), so running from a mod subfolder still lands it in the project. Without a terminal (an agent's Bash call) it refuses unless `--yes` is also given, so get the user's go-ahead first and then run `--force --yes`. `--no-prefs` combines with `--force`.
 
-Exits 1 if DayZ Tools, `ObjectBuilder.exe` or the `.reg` is missing, Object Builder is running or `tasklist` cannot tell whether it is (it writes its settings back to the registry when it closes, so close it first), the `.reg` touches a key outside `HKEY_CURRENT_USER`, the reset is not confirmed, the backup export or the key delete fails, `CConfig` is still missing after import, or the preferred flags cannot be written; a failed `reg import` returns its own exit code. Both import failures keep their exit code after an automatic restore, because the import itself did not happen.
+Exits 1 if DayZ Tools, `ObjectBuilder.exe` or the `.reg` is missing, Object Builder is running or `tasklist` (on Linux, `/proc`) cannot tell whether it is (it writes its settings back to the registry when it closes, so close it first), the `.reg` touches a key outside `HKEY_CURRENT_USER`, the reset is not confirmed, the backup export or the key delete fails, `CConfig` is still missing after import, or the preferred flags cannot be written; a failed `reg import` returns its own exit code. Both import failures keep their exit code after an automatic restore, because the import itself did not happen.
+
+## On Linux
+
+Object Builder runs under Steam Proton and keeps its settings in the registry of the DayZ Tools prefix (`steamapps/compatdata/830640`). There is no `reg` command on Linux, so every registry step runs the prefix's own `reg.exe` through Proton: `reg query` for the checks and the preferred flags, `reg import`, `reg export` and `reg delete` as described above, and `reg add` to write the four flags. The skill reads the registry with `reg query` and not from the prefix's `user.reg`, because Wine writes that file lazily while another program of the prefix, such as an open Workbench, is running.
+
+- Proton is the one Steam uses for DayZ Tools, or the folder in `DAYZ_PROTON`; the Steam Linux Runtime it names must be installed from the Steam library. `/dayz-preflight` prints both as `Host:` lines.
+- The `.reg` file and the backup go to `reg.exe` as `Z:\...` paths. The backup is still written to `.claude/local-memory/` in the project.
+- If Proton or the prefix cannot be found, the run stops with the reason and changes nothing. The same holds when `reg query` cannot run, so an unreadable registry is never taken as "not configured".
+- A restore that fails prints the full Proton command to import the backup by hand, in place of `reg import "<backup>"`.
+- The "Running: reg ..." lines show the `reg.exe` arguments as Proton gets them (`Z:\` paths).
 
 ## When to run
 
@@ -75,7 +85,7 @@ Preflight complete.
 [OK]    ObjectBuilder.exe: ...\Bin\ObjectBuilder\ObjectBuilder.exe
 [OK]    Default settings file: ObjectBuilder_defaultSettings.reg
 [INFO]  Registry empty — importing defaults.
-[INFO]  Running: reg import ...\ObjectBuilder_defaultSettings.reg
+[INFO]  Running: reg import ...\ObjectBuilder_defaultSettings.reg   (Linux: reg import Z:\...)
 [OK]    Registry imported successfully.
 
 [INFO]  Applying preferred Object Builder defaults (skip with --no-prefs):
@@ -94,10 +104,10 @@ On an already-configured machine the import is skipped (`[OK] Registry already c
 Object Builder is an old MFC-based Windows tool — its config lives entirely under `HKEY_CURRENT_USER\Software\Bohemia Interactive\DayZ Tools\Object Builder`. The shipped `.reg` file writes window/panel/toolbar defaults into that tree. It's **HKCU-only** (the script verifies this before every import), so:
 
 - No Administrator elevation needed.
-- Only affects the current Windows user.
+- Only affects the current Windows user (on Linux, the DayZ Tools prefix of the current Linux user).
 - Reversible: any import over an existing Object Builder key (a forced reset or a partial tree) saves a backup `.reg` first, and you can `reg import` it to get your layout back. The four preferred flags are re-applied on every run without `--no-prefs`.
 
 ## Do not
 
-- Don't run as Administrator unless the non-elevated import fails. The `.reg` writes to HKCU, not HKLM.
+- Don't run as Administrator unless the non-elevated import fails. The `.reg` writes to HKCU, not HKLM. (Linux has no Administrator step; a failed import there is a Proton or prefix problem.)
 - Don't edit the `.reg` file in DayZ Tools install — Steam will overwrite it on update. If you want custom defaults, save a layout from inside Object Builder; it persists in the same registry tree but in `MainFrame-*` subkeys you don't need to touch directly.

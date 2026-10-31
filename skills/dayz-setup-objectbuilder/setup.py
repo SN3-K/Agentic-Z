@@ -24,6 +24,8 @@ See SKILL.md for full usage.
 from __future__ import annotations
 
 import argparse
+import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime
@@ -32,6 +34,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
 import skill_helpers as h  # noqa: E402
+from platform_env import tools_prefix  # noqa: E402
 
 REG_KEY = r"Software\Bohemia Interactive\DayZ Tools\Object Builder"
 REG_SUBKEY_CCONFIG = REG_KEY + r"\CConfig"
@@ -57,10 +60,91 @@ PROJECT_DIR = h.load_module("dayz_setup_ob_state", h.DAYZ_INIT_STATE).find_proje
 BACKUP_DIR = PROJECT_DIR / ".claude" / "local-memory"
 HKCU_PREFIX = "HKEY_CURRENT_USER\\"
 
+# On Linux, Object Builder runs under Proton and keeps HKCU in the DayZ Tools
+# prefix. Reads and writes both go through the prefix's reg.exe: user.reg is
+# not read directly because Wine writes it lazily while another program in the
+# prefix (an open Workbench) keeps wineserver running.
+# A `reg query` value line: four spaces, name, four spaces, type, four spaces, data.
+# Names may hold single spaces and '#'.
+_REG_QUERY_VALUE = re.compile(r"^    (.+?)    (REG_\w+)(?:    (.*))?$")
+
+
+class RegistryUnreadable(RuntimeError):
+    """reg.exe could not be run in the DayZ Tools prefix, so the registry state is unknown."""
+
+
+def _run_wine_reg(args: list[str]) -> tuple[int, str]:
+    """Run the DayZ Tools prefix's reg.exe under Proton; returns (exit code, its output).
+
+    Raises RegistryUnreadable, with the reason, when there is no prefix or
+    reg.exe cannot be started.
+    """
+    prefix = tools_prefix()
+    if prefix is None:
+        raise RegistryUnreadable("The DayZ Tools Proton prefix (steamapps/compatdata/830640) is missing. "
+                                 "Install DayZ Tools in Steam and start it once.")
+    try:
+        return h.run_windows_tool(prefix / "drive_c" / "windows" / "system32" / "reg.exe", args)
+    except (h.ProtonError, OSError, subprocess.SubprocessError) as exc:
+        raise RegistryUnreadable(f"Could not run reg.exe through Proton: {exc}") from exc
+
+
+def _parse_reg_query(output: str) -> dict[str, str]:
+    """The values in `reg query <key>` output, as {name: data}.
+
+    Lines that are not value lines (the key name, subkey names, blank lines)
+    are skipped.
+    """
+    values: dict[str, str] = {}
+    for line in output.splitlines():
+        match = _REG_QUERY_VALUE.match(line)
+        if match:
+            values[match.group(1)] = match.group(3) or ""
+    return values
+
+
+def _wine_reg_query(subkey: str) -> Optional[dict[str, str]]:
+    """Values of HKCU\\<subkey> in the DayZ Tools prefix, or None when the key does not exist.
+
+    reg query exits 0 only when the key exists. Raises RegistryUnreadable when
+    reg.exe cannot be run.
+    """
+    rc, output = _run_wine_reg(["query", f"HKCU\\{subkey}"])
+    if rc != 0:
+        return None
+    return _parse_reg_query(output)
+
+
+def _run_reg(args: list[str]) -> tuple[int, str, str]:
+    """Run reg.exe with args; returns (exit code, stdout, stderr).
+
+    Windows: the system's reg. Linux: the DayZ Tools prefix's own reg.exe
+    under Proton, whose output comes back as one text (stdout on success,
+    stderr on failure); path arguments must already be P:\\ or Z:\\ paths.
+    A reg that cannot be started gives exit code 1 and the reason as stderr.
+    """
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(["reg", *args], capture_output=True, text=True)
+        except OSError as exc:
+            return 1, "", f"Could not run reg: {exc}"
+        return result.returncode, result.stdout, result.stderr
+    try:
+        rc, output = _run_wine_reg(args)
+    except RegistryUnreadable as exc:
+        return 1, "", str(exc)
+    return (rc, output, "") if rc == 0 else (rc, "", output)
+
+
+def _reg_path(path: Path) -> str:
+    """A file path as reg.exe sees it (Z:\\... under Proton)."""
+    return str(path) if sys.platform == "win32" else h.to_wine_path(path)
+
 
 def _hkcu_key_exists(subkey: str) -> bool:
+    """True if HKCU\\<subkey> exists. On Linux raises RegistryUnreadable when reg.exe cannot run."""
     if sys.platform != "win32":
-        return False
+        return _wine_reg_query(subkey) is not None
     try:
         import winreg
     except ImportError:
@@ -74,13 +158,15 @@ def _hkcu_key_exists(subkey: str) -> bool:
 
 def registry_has_objectbuilder_settings() -> bool:
     """True if the Object Builder registry tree exists with at least the CConfig
-    subkey populated. Bohemia's default .reg lays this down on first import."""
+    subkey populated. Bohemia's default .reg lays this down on first import.
+    On Linux raises RegistryUnreadable when the prefix's reg.exe cannot run."""
     return _hkcu_key_exists(REG_SUBKEY_CCONFIG)
 
 
 def registry_has_objectbuilder_key() -> bool:
     """True if the parent Object Builder key exists at all. It can hold saved
-    MainFrame-* layouts or HistoryPaths even when CConfig is missing."""
+    MainFrame-* layouts or HistoryPaths even when CConfig is missing.
+    On Linux raises RegistryUnreadable when the prefix's reg.exe cannot run."""
     return _hkcu_key_exists(REG_KEY)
 
 
@@ -91,7 +177,7 @@ def apply_preferences() -> Optional[int]:
     written, or None when CConfig cannot be opened for writing or a write fails
     (a [FAIL] line naming the error is printed)."""
     if sys.platform != "win32":
-        return 0
+        return _apply_preferences_wine()
     try:
         import winreg
     except ImportError:
@@ -125,6 +211,39 @@ def apply_preferences() -> Optional[int]:
     return changed
 
 
+def _apply_preferences_wine() -> Optional[int]:
+    """apply_preferences on Linux: read CConfig with `reg query`, write with `reg add`."""
+    try:
+        existing_values = _wine_reg_query(REG_SUBKEY_CCONFIG)
+    except RegistryUnreadable as exc:
+        print(f"{h.FAIL} Could not read preferences under HKCU\\{REG_SUBKEY_CCONFIG}: {exc}", file=sys.stderr)
+        print("        Re-run with --no-prefs to skip this step.", file=sys.stderr)
+        return None
+    if existing_values is None:
+        print(f"{h.FAIL} Could not write preferences under HKCU\\{REG_SUBKEY_CCONFIG}: "
+              "the key does not exist in the DayZ Tools prefix.", file=sys.stderr)
+        print("        Re-run with --no-prefs to skip this step.", file=sys.stderr)
+        return None
+    changed = 0
+    for name, (on_value, label) in PREFERRED_FLAGS_ON.items():
+        if existing_values.get(name) == on_value:
+            print(f"{h.OK} {label}: already on")
+            continue
+        rc, _, err = _run_reg(["add", f"HKCU\\{REG_SUBKEY_CCONFIG}", "/v", name,
+                               "/t", "REG_SZ", "/d", on_value, "/f"])
+        if rc != 0:
+            print(f"{h.FAIL} Could not write preferences under HKCU\\{REG_SUBKEY_CCONFIG}: "
+                  f"reg add {name!r} failed (exit {rc}).", file=sys.stderr)
+            if err.strip():
+                print(err.strip(), file=sys.stderr)
+            print(f"        {changed} of {len(PREFERRED_FLAGS_ON)} were written before the error. "
+                  "Re-run with --no-prefs to skip this step.", file=sys.stderr)
+            return None
+        print(f"{INFO} {label}: turned on")
+        changed += 1
+    return changed
+
+
 def _read_reg_text(reg_path: Path) -> str:
     """Decode a .reg file (regedit writes UTF-16 LE with a BOM; REGEDIT4 files are ANSI)."""
     data = reg_path.read_bytes()
@@ -151,14 +270,14 @@ def foreign_reg_keys(reg_path: Path) -> list[str]:
 
 def import_reg_file(reg_path: Path) -> int:
     """Run `reg import` on the .reg file. Returns the process exit code."""
-    cmd = ["reg", "import", str(reg_path)]
-    print(f"{INFO} Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.stdout.strip():
-        print(result.stdout.strip())
-    if result.returncode != 0 and result.stderr.strip():
-        print(result.stderr.strip(), file=sys.stderr)
-    return result.returncode
+    args = ["import", _reg_path(reg_path)]
+    print(f"{INFO} Running: reg {' '.join(args)}")
+    rc, out, err = _run_reg(args)
+    if out.strip():
+        print(out.strip())
+    if rc != 0 and err.strip():
+        print(err.strip(), file=sys.stderr)
+    return rc
 
 
 def backup_registry(backup_dir: Path) -> Optional[Path]:
@@ -168,12 +287,12 @@ def backup_registry(backup_dir: Path) -> Optional[Path]:
     """
     backup_dir.mkdir(parents=True, exist_ok=True)
     dest = backup_dir / f"objectbuilder-backup-{datetime.now():%Y%m%d-%H%M%S}.reg"
-    cmd = ["reg", "export", f"HKCU\\{REG_KEY}", str(dest), "/y"]
-    print(f"{INFO} Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 or not dest.is_file():
-        if result.stderr.strip():
-            print(result.stderr.strip(), file=sys.stderr)
+    args = ["export", f"HKCU\\{REG_KEY}", _reg_path(dest), "/y"]
+    print(f"{INFO} Running: reg {' '.join(args)}")
+    rc, _, err = _run_reg(args)
+    if rc != 0 or not dest.is_file():
+        if err.strip():
+            print(err.strip(), file=sys.stderr)
         return None
     return dest
 
@@ -183,12 +302,35 @@ def delete_objectbuilder_key() -> int:
 
     Returns the process exit code (its error is printed on failure).
     """
-    cmd = ["reg", "delete", f"HKCU\\{REG_KEY}", "/f"]
-    print(f"{INFO} Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 and result.stderr.strip():
-        print(result.stderr.strip(), file=sys.stderr)
-    return result.returncode
+    args = ["delete", f"HKCU\\{REG_KEY}", "/f"]
+    print(f"{INFO} Running: reg {' '.join(args)}")
+    rc, _, err = _run_reg(args)
+    if rc != 0 and err.strip():
+        print(err.strip(), file=sys.stderr)
+    return rc
+
+
+def restore_hint(backup: Path) -> str:
+    """A command the user can run by hand to import the backup again.
+
+    Windows: plain `reg import`. Linux has no reg command, so it is the same
+    Proton command this script runs the prefix's reg.exe with; when that
+    cannot be built, the Windows path to import and the reason instead.
+    """
+    if sys.platform == "win32":
+        return f'reg import "{backup}"'
+    wine_backup = h.to_wine_path(backup)
+    prefix = tools_prefix()
+    if prefix is None:
+        return (f'reg import "{wine_backup}" in the DayZ Tools Proton prefix, once DayZ Tools is installed '
+                "and started from Steam again")
+    try:
+        argv, env = h.windows_tool_cmd(prefix / "drive_c" / "windows" / "system32" / "reg.exe",
+                                       ["import", wine_backup])
+    except h.ProtonError as exc:
+        return f'reg import "{wine_backup}" in the DayZ Tools Proton prefix ({exc})'
+    assignments = [f"{name}={shlex.quote(value)}" for name, value in env.items()]
+    return " ".join([*assignments, shlex.join(argv)])
 
 
 def restore_backup(backup: Path, had_cconfig: bool = True) -> bool:
@@ -203,9 +345,13 @@ def restore_backup(backup: Path, had_cconfig: bool = True) -> bool:
     print(f"{INFO} Restoring your previous settings from {backup}")
     delete_objectbuilder_key()
     rc = import_reg_file(backup)
-    restored = registry_has_objectbuilder_settings() if had_cconfig else registry_has_objectbuilder_key()
+    try:
+        restored = registry_has_objectbuilder_settings() if had_cconfig else registry_has_objectbuilder_key()
+    except RegistryUnreadable as exc:
+        print(f"{h.FAIL} Could not check the restored keys: {exc}", file=sys.stderr)
+        restored = False
     if rc != 0 or not restored:
-        print(f"{h.FAIL} Restore failed (exit {rc}). Restore by hand with: reg import \"{backup}\"",
+        print(f"{h.FAIL} Restore failed (exit {rc}). Restore by hand with: {restore_hint(backup)}",
               file=sys.stderr)
         return False
     print(f"{h.OK} Previous settings restored; Object Builder is as it was before this run.")
@@ -214,14 +360,26 @@ def restore_backup(backup: Path, had_cconfig: bool = True) -> bool:
 
 def objectbuilder_state() -> tuple[Optional[bool], int]:
     """(running, tasklist exit code). running is True or False, or None when
-    tasklist failed and the answer is unknown."""
+    tasklist failed and the answer is unknown. On Linux /proc is read instead
+    (Object Builder under Proton shows by its Windows path); the code is 0, or
+    1 when /proc cannot be read."""
     if sys.platform != "win32":
-        return False, 0
+        found = h.posix_processes("ObjectBuilder.exe")
+        if found is None:
+            return None, 1
+        return bool(found), 0
     result = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ObjectBuilder.exe", "/NH"],
                             capture_output=True, text=True)
     if result.returncode != 0:
         return None, result.returncode
     return "objectbuilder.exe" in result.stdout.lower(), 0
+
+
+def process_check_failure(rc: int) -> str:
+    """Why objectbuilder_state() could not tell whether Object Builder runs."""
+    if sys.platform != "win32":
+        return "/proc could not be read"
+    return f"tasklist failed (exit code {rc})"
 
 
 def objectbuilder_running() -> bool:
@@ -231,7 +389,7 @@ def objectbuilder_running() -> bool:
     and would undo a reset or preference written while it is open."""
     running, rc = objectbuilder_state()
     if running is None:
-        print(f"{h.WARN} tasklist failed (exit code {rc}); "
+        print(f"{h.WARN} {process_check_failure(rc)}; "
               "could not check whether Object Builder is running, so treating it as not running.",
               file=sys.stderr)
         return False
@@ -300,7 +458,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     running, tasklist_rc = objectbuilder_state()
     if running is None:
-        print(f"{h.FAIL} tasklist failed (exit code {tasklist_rc}), so it is unknown whether "
+        print(f"{h.FAIL} {process_check_failure(tasklist_rc)}, so it is unknown whether "
               "Object Builder is running.\n"
               "        Close Object Builder if it is open and re-run; it rewrites these settings on exit.",
               file=sys.stderr)
@@ -309,10 +467,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"{h.FAIL} Close Object Builder first; it rewrites these settings on exit.", file=sys.stderr)
         return 1
 
-    already_configured = registry_has_objectbuilder_settings()
-    # A key without CConfig still holds user data (MainFrame-* layouts,
-    # HistoryPaths), so it is backed up before the defaults are merged over it.
-    partial_tree = not already_configured and registry_has_objectbuilder_key()
+    try:
+        already_configured = registry_has_objectbuilder_settings()
+        # A key without CConfig still holds user data (MainFrame-* layouts,
+        # HistoryPaths), so it is backed up before the defaults are merged over it.
+        partial_tree = not already_configured and registry_has_objectbuilder_key()
+    except RegistryUnreadable as exc:
+        print(f"{h.FAIL} Could not read HKCU\\{REG_KEY}, so it is unknown whether Object Builder "
+              f"is configured. Nothing was changed.\n        {exc}", file=sys.stderr)
+        return 1
     backup: Optional[Path] = None  # set once a backup exists and the registry is about to change
 
     if already_configured and not args.force:
@@ -335,7 +498,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print(f"{h.FAIL} Could not back up HKCU\\{REG_KEY}; reset not attempted.", file=sys.stderr)
                 return 1
             print(f"{h.OK} Current settings backed up to {saved}")
-            print(f"{INFO} Restore them with: reg import \"{saved}\"")
+            print(f"{INFO} Restore them with: {restore_hint(saved)}")
             rc = delete_objectbuilder_key()
             if rc != 0:
                 print(f"{h.FAIL} Could not delete HKCU\\{REG_KEY} (exit {rc}); defaults not imported.", file=sys.stderr)
@@ -349,19 +512,28 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print(f"{h.FAIL} Could not back up HKCU\\{REG_KEY}; defaults not imported.", file=sys.stderr)
                 return 1
             print(f"{h.OK} Current settings backed up to {saved}")
-            print(f"{INFO} Restore them with: reg import \"{saved}\"")
+            print(f"{INFO} Restore them with: {restore_hint(saved)}")
             backup = saved
         else:
             print(f"{INFO} Registry empty — importing defaults.")
         rc = import_reg_file(ob_reg)
         if rc != 0:
             print(f"{h.FAIL} reg import failed (exit {rc}).", file=sys.stderr)
-            print("        Importing into HKCU does not need elevation, but try an", file=sys.stderr)
-            print("        Administrator shell if the failure persists.", file=sys.stderr)
+            if sys.platform == "win32":
+                print("        Importing into HKCU does not need elevation, but try an", file=sys.stderr)
+                print("        Administrator shell if the failure persists.", file=sys.stderr)
             if backup is not None:
                 restore_backup(backup, had_cconfig=not partial_tree)
             return rc
-        if not registry_has_objectbuilder_settings():
+        try:
+            imported = registry_has_objectbuilder_settings()
+        except RegistryUnreadable as exc:
+            print(f"{h.FAIL} Registry import finished but its keys could not be checked: {exc}", file=sys.stderr)
+            if backup is not None:
+                print(f"        Your previous settings are in {backup}. Restore them with: {restore_hint(backup)}",
+                      file=sys.stderr)
+            return 1
+        if not imported:
             print(f"{h.FAIL} Registry import claimed success but the keys are still missing.", file=sys.stderr)
             if backup is not None:
                 restore_backup(backup, had_cconfig=not partial_tree)

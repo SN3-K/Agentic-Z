@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,12 +13,45 @@ wb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(wb)
 
 
+@pytest.fixture(autouse=True)
+def _same_startup_watch_on_every_os(monkeypatch):
+    """Tests take the Proton branch on Linux; keep its watch as short as the Windows one."""
+    monkeypatch.setattr(wb, "PROTON_STARTUP_CHECK_SECONDS", wb.STARTUP_CHECK_SECONDS)
+
+
+class _ExitsOnPoll:
+    """A process that is still running for its first n polls, then has exited with 3."""
+
+    def __init__(self, n):
+        self.polls_left = n
+
+    def poll(self):
+        self.polls_left -= 1
+        return 3 if self.polls_left < 0 else None
+
+
+@pytest.mark.parametrize("windows, expected", [(True, None), (False, 3)])
+def test_startup_watch_is_longer_through_proton(monkeypatch, windows, expected):
+    # Through Proton a failed start shows up seconds later; a 1 s watch reported a crash as a launch.
+    monkeypatch.setattr(wb.h, "IS_WINDOWS", windows)
+    monkeypatch.setattr(wb, "STARTUP_CHECK_SECONDS", 0)
+    monkeypatch.setattr(wb, "PROTON_STARTUP_CHECK_SECONDS", 10)
+    monkeypatch.setattr(wb, "STARTUP_POLL_INTERVAL", 0)
+    assert wb.wait_for_early_exit(_ExitsOnPoll(5)) == expected
+
+
 @pytest.fixture
 def p_drive(monkeypatch, tmp_path):
     drive = tmp_path / "P"
     drive.mkdir()
     monkeypatch.setattr(wb, "P_DRIVE", drive)
     return drive
+
+
+@pytest.fixture
+def windows(monkeypatch):
+    """Take the Windows branches (tasklist, a plain Popen) on any host."""
+    monkeypatch.setattr(wb.h, "IS_WINDOWS", True)
 
 
 def _fake_exe(root, bundled_gproj=True):
@@ -79,7 +113,7 @@ def test_wrong_extension_warns(tmp_path, capsys):
     assert "not a .gproj" in capsys.readouterr().out
 
 
-def test_launch_uses_shared_detach_flags_and_workbench_cwd(tmp_path, monkeypatch):
+def test_launch_uses_shared_detach_flags_and_workbench_cwd(tmp_path, monkeypatch, windows):
     exe = _fake_exe(tmp_path)
     spawned = {}
 
@@ -108,7 +142,7 @@ def test_launch_uses_shared_detach_flags_and_workbench_cwd(tmp_path, monkeypatch
     assert spawned["cwd"] == str(exe.parent)
 
 
-def test_launch_passes_mod_gproj_through_gproj_switch(tmp_path, monkeypatch):
+def test_launch_passes_mod_gproj_through_gproj_switch(tmp_path, monkeypatch, windows):
     exe = _fake_exe(tmp_path)
     gproj = tmp_path / "P" / "MyMod" / "workbench" / "dayz.gproj"
     gproj.parent.mkdir(parents=True)
@@ -201,7 +235,24 @@ def test_running_workbench_refuses_a_second_launch(tmp_path, monkeypatch, capsys
     assert "already running (PID 1234)" in capsys.readouterr().err
 
 
-def test_running_workbench_pids_parses_tasklist(monkeypatch):
+def test_workbench_exe_is_found_whatever_its_case(tmp_path, monkeypatch, capsys):
+    # DayZ Tools ships WorkbenchApp.exe; Linux file names are case-sensitive.
+    exe = tmp_path / "Bin" / "Workbench" / "WorkbenchApp.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    (exe.parent / "dayz.gproj").write_text("")
+    monkeypatch.setattr(wb.h, "gate_on_preflight", lambda: None)
+    monkeypatch.setattr(wb.h, "preflight", _tools_at(tmp_path), raising=False)
+    monkeypatch.setattr(wb, "running_workbench_pids", lambda: [1234])
+    monkeypatch.setattr(wb.subprocess, "Popen", _no_spawn)
+    monkeypatch.setattr("sys.argv", ["launch.py"])
+    assert wb.main() == 1
+    captured = capsys.readouterr()
+    assert "not found" not in captured.err
+    assert "already running (PID 1234)" in captured.err
+
+
+def test_running_workbench_pids_parses_tasklist(monkeypatch, windows):
     out = (
         '"WorkbenchApp.exe","1234","Console","1","500,000 K"\n'
         '"workbenchApp.exe","5678","Console","1","400,000 K"\n'
@@ -217,7 +268,7 @@ def test_running_workbench_pids_parses_tasklist(monkeypatch):
     assert "IMAGENAME eq workbenchApp.exe" in seen["cmd"]
 
 
-def test_running_workbench_pids_empty_when_none_match(monkeypatch):
+def test_running_workbench_pids_empty_when_none_match(monkeypatch, windows):
     monkeypatch.setattr(
         wb.subprocess,
         "check_output",
@@ -226,7 +277,7 @@ def test_running_workbench_pids_empty_when_none_match(monkeypatch):
     assert wb.running_workbench_pids() == []
 
 
-def test_process_that_exits_at_once_is_reported_as_failure(tmp_path, monkeypatch, capsys):
+def test_process_that_exits_at_once_is_reported_as_failure(tmp_path, monkeypatch, windows, capsys):
     """A workbenchApp.exe that dies on start (bad gproj, missing DLL) must not report success."""
     exe = _fake_exe(tmp_path)
 
@@ -346,7 +397,7 @@ def test_ordinary_mod_name_is_not_reserved(p_drive):
     "error",
     [FileNotFoundError("tasklist"), wb.subprocess.CalledProcessError(1, ["tasklist"])],
 )
-def test_tasklist_failure_warns_instead_of_silently_skipping_the_guard(error, monkeypatch, capsys):
+def test_tasklist_failure_warns_instead_of_silently_skipping_the_guard(error, monkeypatch, windows, capsys):
     def broken(cmd, **kwargs):
         raise error
 
@@ -357,7 +408,7 @@ def test_tasklist_failure_warns_instead_of_silently_skipping_the_guard(error, mo
     assert "cannot check for a running Workbench" in err
 
 
-def test_spawn_oserror_exits_1(tmp_path, monkeypatch, capsys):
+def test_spawn_oserror_exits_1(tmp_path, monkeypatch, windows, capsys):
     _fake_exe(tmp_path)
 
     def cannot_spawn(cmd, **kwargs):
@@ -413,7 +464,7 @@ def test_vanilla_launch_without_bundled_gproj_exits_1(tmp_path, monkeypatch, cap
     assert "Verify" in err and "Steam" in err
 
 
-def test_mod_launch_does_not_need_bundled_gproj(tmp_path, monkeypatch):
+def test_mod_launch_does_not_need_bundled_gproj(tmp_path, monkeypatch, windows):
     exe = _fake_exe(tmp_path, bundled_gproj=False)
     gproj = tmp_path / "P" / "MyMod" / "workbench" / "dayz.gproj"
     gproj.parent.mkdir(parents=True)
@@ -457,3 +508,145 @@ def test_stdout_is_line_buffered_so_output_keeps_order_with_preflight(monkeypatc
     monkeypatch.setattr("sys.argv", ["launch.py"])
     assert wb.main() == 1
     assert seen["header_flushed"]
+
+
+# --- Linux: Workbench under Proton ---------------------------------------------
+
+# to_wine_path only converts on a Linux host.
+linux_paths = pytest.mark.skipif(sys.platform == "win32", reason="P:\\ and Z:\\ conversion happens on Linux only")
+
+class _FakeProc:
+    pid = 4242
+
+    def poll(self):
+        return None  # still running
+
+
+def _linux_launch(monkeypatch, tools_root, argv, proc=None):
+    """Run main() on the Linux branch with launch_windows_tool faked; returns what it was called with."""
+    launched = {}
+
+    def fake_launch(exe, args, *, cwd=None):
+        launched.update(exe=exe, args=args, cwd=cwd)
+        return proc or _FakeProc()
+
+    monkeypatch.setattr(wb.h, "IS_WINDOWS", False)
+    monkeypatch.setattr(wb.h, "gate_on_preflight", lambda: None)
+    monkeypatch.setattr(wb.h, "preflight", _tools_at(tools_root), raising=False)
+    monkeypatch.setattr(wb.h, "posix_processes", lambda image: [])  # no Workbench running
+    monkeypatch.setattr(wb.h, "launch_windows_tool", fake_launch)
+    monkeypatch.setattr(wb.subprocess, "Popen", _no_spawn)
+    monkeypatch.setattr("sys.argv", ["launch.py", *argv])
+    return launched
+
+
+@linux_paths
+def test_linux_mod_gproj_is_passed_as_a_p_drive_path(tmp_path, monkeypatch, p_drive):
+    exe = _fake_exe(tmp_path / "tools")
+    gproj = p_drive / "MyMod" / "workbench" / "dayz.gproj"
+    gproj.parent.mkdir(parents=True)
+    gproj.write_text("")
+    launched = _linux_launch(monkeypatch, tmp_path / "tools", ["--mod", "MyMod"])
+    assert wb.main() == 0
+    assert launched["exe"] == exe
+    assert launched["args"] == ["-gproj=P:\\MyMod\\workbench\\dayz.gproj"]
+    assert launched["cwd"] == str(exe.parent)
+
+
+@linux_paths
+def test_linux_gproj_outside_p_is_passed_as_a_z_drive_path(tmp_path, monkeypatch, p_drive):
+    _fake_exe(tmp_path / "tools")
+    gproj = tmp_path / "elsewhere" / "custom.gproj"
+    gproj.parent.mkdir()
+    gproj.write_text("")
+    launched = _linux_launch(monkeypatch, tmp_path / "tools", ["--gproj", str(gproj)])
+    assert wb.main() == 0
+    expected = "Z:" + str(gproj).replace("/", "\\")
+    assert launched["args"] == [f"-gproj={expected}"]
+
+
+def test_linux_vanilla_launch_has_no_project_argument(tmp_path, monkeypatch, p_drive):
+    _fake_exe(tmp_path / "tools")
+    launched = _linux_launch(monkeypatch, tmp_path / "tools", [])
+    assert wb.main() == 0
+    assert launched["args"] == []
+
+
+@linux_paths
+def test_linux_space_only_in_the_p_root_folder_is_allowed(tmp_path, monkeypatch):
+    # The P root may sit in a Linux folder with a space; Workbench sees P:\MyMod\x.gproj.
+    drive = tmp_path / "my games" / "P"
+    gproj = drive / "MyMod" / "x.gproj"
+    gproj.parent.mkdir(parents=True)
+    gproj.write_text("")
+    monkeypatch.setattr(wb, "P_DRIVE", drive)
+    assert wb.resolve_gproj(None, str(gproj)) == gproj
+
+
+@linux_paths
+def test_linux_space_in_the_wine_path_is_refused(tmp_path, monkeypatch, p_drive):
+    gproj = p_drive / "My Mod" / "x.gproj"
+    gproj.parent.mkdir(parents=True)
+    gproj.write_text("")
+    with pytest.raises(SystemExit) as exc:
+        wb.resolve_gproj(None, str(gproj))
+    assert "contains a space" in str(exc.value.code)
+
+
+def test_linux_proton_error_exits_1_with_its_fix(tmp_path, monkeypatch, capsys, p_drive):
+    _fake_exe(tmp_path / "tools")
+    _linux_launch(monkeypatch, tmp_path / "tools", [])
+
+    def no_proton(exe, args, *, cwd=None):
+        raise wb.h.ProtonError("no Proton found for DayZ Tools. Set DAYZ_PROTON to a Proton folder.")
+
+    monkeypatch.setattr(wb.h, "launch_windows_tool", no_proton)
+    assert wb.main() == 1
+    out = capsys.readouterr()
+    assert "Cannot start workbenchApp.exe through Proton: no Proton found" in out.err
+    assert "DAYZ_PROTON" in out.err
+    assert "Workbench launched" not in out.out
+
+
+def test_linux_tool_that_exits_at_once_is_reported(tmp_path, monkeypatch, capsys, p_drive):
+    _fake_exe(tmp_path / "tools")
+
+    class Dies:
+        pid = 1
+
+        def poll(self):
+            return 3
+
+    _linux_launch(monkeypatch, tmp_path / "tools", [], proc=Dies())
+    assert wb.main() == 1
+    assert "exit code 3" in capsys.readouterr().err
+
+
+def test_linux_running_pids_come_from_proc(monkeypatch):
+    seen = {}
+
+    def fake_processes(image):
+        seen["image"] = image
+        return [(311, "Z:\\steam\\DayZ Tools\\Bin\\Workbench\\workbenchApp.exe -gproj=P:\\M\\dayz.gproj")]
+
+    monkeypatch.setattr(wb.h, "IS_WINDOWS", False)
+    monkeypatch.setattr(wb.h, "posix_processes", fake_processes)
+    monkeypatch.setattr(wb.subprocess, "check_output", lambda *a, **k: pytest.fail("ran tasklist on Linux"))
+    assert wb.running_workbench_pids() == [311]
+    assert seen["image"] == "workbenchApp.exe"
+
+
+def test_linux_unreadable_proc_warns_and_launches_anyway(monkeypatch, capsys):
+    monkeypatch.setattr(wb.h, "IS_WINDOWS", False)
+    monkeypatch.setattr(wb.h, "posix_processes", lambda image: None)
+    assert wb.running_workbench_pids() == []
+    assert "/proc cannot be read" in capsys.readouterr().err
+
+
+def test_linux_running_workbench_refuses_a_second_launch(tmp_path, monkeypatch, capsys, p_drive):
+    _fake_exe(tmp_path / "tools")
+    _linux_launch(monkeypatch, tmp_path / "tools", [])
+    monkeypatch.setattr(wb.h, "posix_processes", lambda image: [(77, "workbenchApp.exe")])
+    monkeypatch.setattr(wb.h, "launch_windows_tool", _no_spawn)
+    assert wb.main() == 1
+    assert "already running (PID 77)" in capsys.readouterr().err

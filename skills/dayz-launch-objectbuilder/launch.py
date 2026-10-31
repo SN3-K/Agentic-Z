@@ -60,6 +60,9 @@ MAX_LISTED_MODELS = 20
 # How long to watch the new process before reporting it launched. A bad install
 # or a missing DLL makes ObjectBuilder.exe exit at once; a real start keeps running.
 STARTUP_CHECK_SECONDS = 1.0
+# Through Proton a failed start takes longer to show: Object Builder crashing in
+# DXVK exited 2-3 s after the launch. Watch longer there.
+PROTON_STARTUP_CHECK_SECONDS = 8.0
 STARTUP_POLL_INTERVAL = 0.1
 
 
@@ -154,9 +157,11 @@ def resolve_target(file_arg: Optional[str], mod_arg: Optional[str]) -> Optional[
 
 
 def wait_for_early_exit(proc: subprocess.Popen) -> Optional[int]:
-    """Poll the new process for STARTUP_CHECK_SECONDS. Return its exit code if it
-    already exited, or None if it is still running."""
-    deadline = time.monotonic() + STARTUP_CHECK_SECONDS
+    """Poll the new process for STARTUP_CHECK_SECONDS (PROTON_STARTUP_CHECK_SECONDS
+    off Windows). Return its exit code if it already exited, or None if it is
+    still running."""
+    seconds = STARTUP_CHECK_SECONDS if h.IS_WINDOWS else PROTON_STARTUP_CHECK_SECONDS
+    deadline = time.monotonic() + seconds
     while True:
         code = proc.poll()
         if code is not None or time.monotonic() >= deadline:
@@ -187,7 +192,12 @@ def main() -> int:
         return 1
     print(f"{OK} ObjectBuilder.exe: {ob_exe}")
 
-    if not registry_has_objectbuilder_settings():
+    try:
+        configured = registry_has_objectbuilder_settings()
+    except _setup.RegistryUnreadable as exc:
+        print(f"{FAIL} Could not check whether Object Builder is configured.\n       {exc}", file=sys.stderr)
+        return 1
+    if not configured:
         print(
             f"{FAIL} Object Builder is not configured (registry empty).\n"
             f"       Run: /dayz-setup-objectbuilder\n"
@@ -205,20 +215,27 @@ def main() -> int:
         )
         return 1
 
-    cmd: list[str] = [str(ob_exe)]
+    ob_args: list[str] = []
     if target is not None:
-        cmd.append(str(target))
+        # Under Proton Object Builder needs the model as P:\... (or Z:\... outside P).
+        ob_args.append(str(target) if h.IS_WINDOWS else h.to_wine_path(target, P_DRIVE))
         print(f"{INFO} Opening: {target}")
     elif not args.mod:
         print(f"{INFO} No --file/--mod given; Object Builder will open its last-used model (or empty).")
 
     try:
-        proc = subprocess.Popen(
-            cmd,
-            close_fds=True,
-            **h.detach_kwargs(),
-            cwd=str(ob_exe.parent),
-        )
+        if h.IS_WINDOWS:
+            proc = subprocess.Popen(
+                [str(ob_exe), *ob_args],
+                close_fds=True,
+                **h.detach_kwargs(),
+                cwd=str(ob_exe.parent),
+            )
+        else:
+            proc = h.launch_windows_tool(ob_exe, ob_args, cwd=str(ob_exe.parent))
+    except h.ProtonError as exc:
+        print(f"{FAIL} Cannot start ObjectBuilder.exe through Proton: {exc}", file=sys.stderr)
+        return 1
     except OSError as exc:
         print(f"{FAIL} Failed to spawn ObjectBuilder.exe: {exc}", file=sys.stderr)
         return 1

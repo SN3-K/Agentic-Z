@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,33 @@ HERE = Path(__file__).resolve().parent
 _spec = importlib.util.spec_from_file_location("dayz_launch_objectbuilder_under_test", HERE / "launch.py")
 ob = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ob)
+
+
+@pytest.fixture(autouse=True)
+def _same_startup_watch_on_every_os(monkeypatch):
+    """Tests take the Proton branch on Linux; keep its watch as short as the Windows one."""
+    monkeypatch.setattr(ob, "PROTON_STARTUP_CHECK_SECONDS", ob.STARTUP_CHECK_SECONDS)
+
+
+class _ExitsOnPoll:
+    """A process that is still running for its first n polls, then has exited with 3."""
+
+    def __init__(self, n):
+        self.polls_left = n
+
+    def poll(self):
+        self.polls_left -= 1
+        return 3 if self.polls_left < 0 else None
+
+
+@pytest.mark.parametrize("windows, expected", [(True, None), (False, 3)])
+def test_startup_watch_is_longer_through_proton(monkeypatch, windows, expected):
+    # Through Proton a failed start shows up seconds later; a 1 s watch reported a crash as a launch.
+    monkeypatch.setattr(ob.h, "IS_WINDOWS", windows)
+    monkeypatch.setattr(ob, "STARTUP_CHECK_SECONDS", 0)
+    monkeypatch.setattr(ob, "PROTON_STARTUP_CHECK_SECONDS", 10)
+    monkeypatch.setattr(ob, "STARTUP_POLL_INTERVAL", 0)
+    assert ob.wait_for_early_exit(_ExitsOnPoll(5)) == expected
 
 
 def test_file_and_mod_are_mutually_exclusive(capsys):
@@ -178,8 +206,11 @@ def test_failed_preflight_stops_before_target_resolution(monkeypatch):
     assert exc.value.code == 1
 
 
-def _fake_launch_env(tmp_path, monkeypatch, running=False):
-    """Stub preflight, DayZ Tools, the registry check and the running check."""
+def _fake_launch_env(tmp_path, monkeypatch, running=False, windows=True):
+    """Stub preflight, DayZ Tools, the registry check and the running check.
+
+    windows=True takes the Windows launch branch (a plain Popen) on any host.
+    """
 
     class FakePreflight:
         @staticmethod
@@ -191,6 +222,7 @@ def _fake_launch_env(tmp_path, monkeypatch, running=False):
     monkeypatch.setattr(ob, "registry_has_objectbuilder_settings", lambda: True)
     monkeypatch.setattr(ob, "objectbuilder_running", lambda: running)
     monkeypatch.setattr(ob, "STARTUP_CHECK_SECONDS", 0)
+    monkeypatch.setattr(ob.h, "IS_WINDOWS", windows)
 
 
 def _fake_exe(tmp_path):
@@ -465,3 +497,152 @@ def test_mod_name_rule_comes_from_new_mod():
     new_mod_py = Path(ob.__file__).resolve().parents[1] / "dayz-new-mod" / "new_mod.py"
     assert Path(ob._new_mod.__file__).resolve() == new_mod_py
     assert ob.MOD_NAME_PATTERN is ob._new_mod.NAME_PATTERN
+
+
+# --- Linux: Object Builder under Proton ------------------------------------------
+
+# to_wine_path only converts on a Linux host.
+linux_paths = pytest.mark.skipif(sys.platform == "win32", reason="P:\\ and Z:\\ conversion happens on Linux only")
+
+
+class _StillRunning:
+    pid = 4242
+
+    def poll(self):
+        return None
+
+
+def _fake_linux_launch(monkeypatch):
+    """Fake launch_windows_tool; returns the dict it records its call in."""
+    launched = {}
+
+    def fake_launch(exe, args, *, cwd=None):
+        launched.update(exe=exe, args=args, cwd=cwd)
+        return _StillRunning()
+
+    monkeypatch.setattr(ob.h, "launch_windows_tool", fake_launch)
+    monkeypatch.setattr(ob.subprocess, "Popen", lambda *a, **k: pytest.fail("used Popen on Linux"))
+    return launched
+
+
+@linux_paths
+def test_linux_mod_model_is_passed_as_a_p_drive_path(tmp_path, monkeypatch):
+    exe = _fake_exe(tmp_path / "tools")
+    _fake_launch_env(tmp_path / "tools", monkeypatch, windows=False)
+    monkeypatch.setattr(ob, "P_DRIVE", tmp_path / "P")
+    model = tmp_path / "P" / "MyMod" / "data" / "vest.p3d"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"")
+    launched = _fake_linux_launch(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["launch.py", "--mod", "MyMod"])
+    assert ob.main() == 0
+    assert launched == {"exe": exe, "args": ["P:\\MyMod\\data\\vest.p3d"], "cwd": str(exe.parent)}
+
+
+@linux_paths
+def test_linux_file_outside_p_is_passed_as_a_z_drive_path(tmp_path, monkeypatch):
+    _fake_exe(tmp_path / "tools")
+    _fake_launch_env(tmp_path / "tools", monkeypatch, windows=False)
+    monkeypatch.setattr(ob, "P_DRIVE", tmp_path / "P")
+    model = tmp_path / "work" / "model.p3d"
+    model.parent.mkdir()
+    model.write_bytes(b"")
+    launched = _fake_linux_launch(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["launch.py", "--file", str(model)])
+    assert ob.main() == 0
+    assert launched["args"] == ["Z:" + str(model).replace("/", "\\")]
+
+
+def test_linux_proton_error_exits_1_with_its_fix(tmp_path, monkeypatch, capsys):
+    _fake_exe(tmp_path)
+    _fake_launch_env(tmp_path, monkeypatch, windows=False)
+
+    def no_proton(exe, args, *, cwd=None):
+        raise ob.h.ProtonError("no Proton found for DayZ Tools. Set DAYZ_PROTON to a Proton folder.")
+
+    monkeypatch.setattr(ob.h, "launch_windows_tool", no_proton)
+    monkeypatch.setattr("sys.argv", ["launch.py"])
+    assert ob.main() == 1
+    out = capsys.readouterr()
+    assert "Cannot start ObjectBuilder.exe through Proton: no Proton found" in out.err
+    assert "launched" not in out.out
+
+
+def _fake_prefix_reg_query(tmp_path, monkeypatch, cconfig_exists):
+    """Put setup.py on the Linux branch with a fake prefix whose reg.exe answers `reg query`.
+
+    Returns the list of argument lists reg.exe was called with.
+    """
+    pfx = tmp_path / "pfx"
+    pfx.mkdir()
+    calls = []
+
+    def fake_run(exe, args, *, cwd=None, timeout=None):
+        calls.append(args)
+        if cconfig_exists:
+            return 0, (f"\r\nHKEY_CURRENT_USER\\{ob._setup.REG_SUBKEY_CCONFIG}\r\n"
+                       "    #View background LOD    REG_SZ    1\r\n")
+        return 1, "reg: Unable to find the specified registry key\r\n"
+
+    monkeypatch.setattr(ob._setup.sys, "platform", "linux")
+    monkeypatch.setattr(ob._setup, "tools_prefix", lambda: pfx)
+    monkeypatch.setattr(ob._setup.h, "run_windows_tool", fake_run)
+    return calls
+
+
+def test_linux_launch_is_not_stopped_as_unconfigured_when_the_key_exists(tmp_path, monkeypatch, capsys):
+    """Off Windows the registry check always said "not configured"; it now asks the prefix's reg.exe."""
+    exe = _fake_exe(tmp_path / "tools")
+    _fake_launch_env(tmp_path / "tools", monkeypatch, windows=False)
+    # Undo the fakes of the two checks so the real ones from setup.py run.
+    monkeypatch.setattr(ob, "registry_has_objectbuilder_settings", ob._setup.registry_has_objectbuilder_settings)
+    monkeypatch.setattr(ob, "objectbuilder_running", ob._setup.objectbuilder_running)
+    calls = _fake_prefix_reg_query(tmp_path, monkeypatch, cconfig_exists=True)
+    monkeypatch.setattr(ob._setup.h, "posix_processes", lambda image: [])
+    launched = _fake_linux_launch(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["launch.py"])
+    assert ob.main() == 0
+    out = capsys.readouterr()
+    assert "not configured" not in out.err
+    assert "Registry configured" in out.out
+    assert calls == [["query", "HKCU\\" + ob._setup.REG_SUBKEY_CCONFIG]]
+    assert launched["exe"] == exe and launched["args"] == []
+
+
+def test_linux_launch_stops_unconfigured_without_the_key(tmp_path, monkeypatch, capsys):
+    _fake_exe(tmp_path)
+    _fake_launch_env(tmp_path, monkeypatch, windows=False)
+    monkeypatch.setattr(ob, "registry_has_objectbuilder_settings", ob._setup.registry_has_objectbuilder_settings)
+    _fake_prefix_reg_query(tmp_path, monkeypatch, cconfig_exists=False)
+    monkeypatch.setattr(ob.h, "launch_windows_tool", lambda *a, **k: pytest.fail("launched while unconfigured"))
+    monkeypatch.setattr("sys.argv", ["launch.py"])
+    assert ob.main() == 1
+    assert "not configured" in capsys.readouterr().err
+
+
+def test_linux_launch_stops_when_the_registry_cannot_be_read(tmp_path, monkeypatch, capsys):
+    """reg.exe that cannot run means the state is unknown: say why, never "not configured"."""
+    _fake_exe(tmp_path)
+    _fake_launch_env(tmp_path, monkeypatch, windows=False)
+    monkeypatch.setattr(ob, "registry_has_objectbuilder_settings", ob._setup.registry_has_objectbuilder_settings)
+    monkeypatch.setattr(ob._setup.sys, "platform", "linux")
+    monkeypatch.setattr(ob._setup, "tools_prefix", lambda: None)
+    monkeypatch.setattr(ob._setup.h, "run_windows_tool", lambda *a, **k: pytest.fail("ran reg.exe without a prefix"))
+    monkeypatch.setattr(ob.h, "launch_windows_tool", lambda *a, **k: pytest.fail("launched with an unknown registry"))
+    monkeypatch.setattr("sys.argv", ["launch.py"])
+    assert ob.main() == 1
+    err = capsys.readouterr().err
+    assert "Could not check whether Object Builder is configured" in err and "compatdata/830640" in err
+    assert "not configured" not in err
+
+
+def test_linux_running_objectbuilder_refuses_a_second_launch(tmp_path, monkeypatch, capsys):
+    _fake_exe(tmp_path)
+    _fake_launch_env(tmp_path, monkeypatch, windows=False)
+    monkeypatch.setattr(ob, "objectbuilder_running", ob._setup.objectbuilder_running)
+    monkeypatch.setattr(ob._setup.sys, "platform", "linux")
+    monkeypatch.setattr(ob._setup.h, "posix_processes", lambda image: [(55, "ObjectBuilder.exe")])
+    monkeypatch.setattr(ob.h, "launch_windows_tool", lambda *a, **k: pytest.fail("spawned a second ObjectBuilder.exe"))
+    monkeypatch.setattr("sys.argv", ["launch.py"])
+    assert ob.main() == 1
+    assert "already running" in capsys.readouterr().err

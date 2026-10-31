@@ -56,6 +56,9 @@ RESERVED_P_FOLDERS["mods"] = "the Workshop junction made by /dayz-preflight"
 # install or a missing DLL makes workbenchApp.exe exit at once; a real start
 # keeps running.
 STARTUP_CHECK_SECONDS = 1.0
+# Through Proton a failed start takes longer to show: Object Builder crashing in
+# DXVK exited 2-3 s after the launch. Watch longer there.
+PROTON_STARTUP_CHECK_SECONDS = 8.0
 STARTUP_POLL_INTERVAL = 0.1
 
 
@@ -120,10 +123,12 @@ def resolve_gproj(mod_arg: Optional[str], gproj_arg: Optional[str]) -> Optional[
                 f"{FAIL} --gproj is a folder, not a project file: {p}\n"
                 "       Pass the .gproj file inside it, e.g. <folder>\\dayz.gproj."
             )
-        if " " in str(p):
+        if " " in h.to_wine_path(p, P_DRIVE):
             # Workbench has not been confirmed to open a quoted "-gproj=<path>"
             # with spaces, so refuse it instead of handing over a path that may
-            # silently open the vanilla project.
+            # silently open the vanilla project. The check is on the path
+            # Workbench is given: under Proton that is its P:\ or Z:\ form, so a
+            # space in the Linux folder holding the P root does not count.
             sys.exit(
                 f"{FAIL} --gproj path contains a space: {p}\n"
                 "       Workbench is not known to open such a path. Move or link the project\n"
@@ -137,9 +142,20 @@ def resolve_gproj(mod_arg: Optional[str], gproj_arg: Optional[str]) -> Optional[
 
 
 def running_workbench_pids() -> list[int]:
-    """PIDs of running workbenchApp.exe processes (tasklist matches names case-insensitively).
-    Warns and returns [] when tasklist cannot run, so the launch goes on
-    without the single-instance check instead of losing it silently."""
+    """PIDs of running workbenchApp.exe processes (tasklist matches names case-insensitively;
+    on Linux /proc, where a Workbench under Proton shows by its Windows path).
+    Warns and returns [] when the processes cannot be listed, so the launch goes
+    on without the single-instance check instead of losing it silently."""
+    if not h.IS_WINDOWS:
+        found = h.posix_processes(WB_EXE_NAME)
+        if found is None:
+            print(
+                f"{WARN} /proc cannot be read; cannot check for a running Workbench.\n"
+                "       Launching anyway; close any other Workbench window on the same project.",
+                file=sys.stderr,
+            )
+            return []
+        return [pid for pid, _ in found]
     try:
         out = subprocess.check_output(
             ["tasklist", "/FI", f"IMAGENAME eq {WB_EXE_NAME}", "/FO", "CSV", "/NH"],
@@ -161,9 +177,11 @@ def running_workbench_pids() -> list[int]:
 
 
 def wait_for_early_exit(proc: subprocess.Popen) -> Optional[int]:
-    """Poll the new process for STARTUP_CHECK_SECONDS. Return its exit code if it
-    already exited, or None if it is still running."""
-    deadline = time.monotonic() + STARTUP_CHECK_SECONDS
+    """Poll the new process for STARTUP_CHECK_SECONDS (PROTON_STARTUP_CHECK_SECONDS
+    off Windows). Return its exit code if it already exited, or None if it is
+    still running."""
+    seconds = STARTUP_CHECK_SECONDS if h.IS_WINDOWS else PROTON_STARTUP_CHECK_SECONDS
+    deadline = time.monotonic() + seconds
     while True:
         code = proc.poll()
         if code is not None or time.monotonic() >= deadline:
@@ -194,19 +212,22 @@ def main() -> int:
         print(f"{FAIL} DayZ Tools not found. Install it via Steam first.", file=sys.stderr)
         return 1
 
-    wb_exe = tools_root / "Bin" / "Workbench" / "workbenchApp.exe"
+    # DayZ Tools ships WorkbenchApp.exe; Linux paths are case-sensitive.
+    wb_exe = h.child_ci(tools_root / "Bin" / "Workbench", WB_EXE_NAME)
     if not wb_exe.exists():
         print(f"{FAIL} workbenchApp.exe not found at {wb_exe}", file=sys.stderr)
         return 1
     print(f"{OK} workbenchApp.exe: {wb_exe}")
 
-    cmd: list[str] = [str(wb_exe)]
+    wb_args: list[str] = []
     if gproj is not None:
         # The project goes through the -gproj switch (a string in
         # workbenchApp.exe); its default is $CurrentDir:dayz.gproj, so a bare
-        # path argument would leave Workbench on the vanilla project.
-        cmd.append(f"-gproj={gproj}")
-        print(f"{INFO} Project: {gproj}")
+        # path argument would leave Workbench on the vanilla project. Under
+        # Proton Workbench needs the path as P:\... (or Z:\... outside P).
+        project = str(gproj) if h.IS_WINDOWS else h.to_wine_path(gproj, P_DRIVE)
+        wb_args.append(f"-gproj={project}")
+        print(f"{INFO} Project: {project}")
     else:
         # With no -gproj switch Workbench opens $CurrentDir:dayz.gproj; on a
         # partial install that file is missing and Workbench reports "cannot
@@ -244,12 +265,18 @@ def main() -> int:
         return 1
 
     try:
-        proc = subprocess.Popen(
-            cmd,
-            close_fds=True,
-            **h.detach_kwargs(),
-            cwd=str(workbench_dir),
-        )
+        if h.IS_WINDOWS:
+            proc = subprocess.Popen(
+                [str(wb_exe), *wb_args],
+                close_fds=True,
+                **h.detach_kwargs(),
+                cwd=str(workbench_dir),
+            )
+        else:
+            proc = h.launch_windows_tool(wb_exe, wb_args, cwd=str(workbench_dir))
+    except h.ProtonError as exc:
+        print(f"{FAIL} Cannot start workbenchApp.exe through Proton: {exc}", file=sys.stderr)
+        return 1
     except OSError as exc:
         print(f"{FAIL} Failed to spawn workbenchApp.exe: {exc}", file=sys.stderr)
         return 1
