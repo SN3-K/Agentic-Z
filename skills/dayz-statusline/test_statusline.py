@@ -144,6 +144,15 @@ def test_real_process_check_returns_a_bool():
     assert mod.diag_running() in (True, False)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the /proc branch; Windows uses a Toolhelp snapshot")
+def test_linux_process_check_reads_the_process_list(monkeypatch):
+    mod = _load("dayz_statusline_linux", "statusline.py")
+    monkeypatch.setattr(mod.platform_env, "posix_processes", lambda image: [(3, r"Z:\\DayZ\\DayZDiag_x64.exe")])
+    assert mod.diag_running() is True
+    monkeypatch.setattr(mod.platform_env, "posix_processes", lambda image: None)
+    assert mod.diag_running() is False
+
+
 def _stdin(data: dict):
     return io.StringIO(json.dumps(data))
 

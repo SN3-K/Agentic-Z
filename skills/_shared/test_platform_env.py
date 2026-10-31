@@ -125,3 +125,94 @@ def test_to_wine_path_uses_p_under_the_root_and_z_elsewhere(tmp_path):
 @windows_only
 def test_to_wine_path_is_unchanged_on_windows():
     assert pe.to_wine_path(Path(r"C:\x\y.c")) == r"C:\x\y.c"
+
+
+# ------------------------------------------------------------ directory links
+
+def test_make_and_remove_dir_link_never_touch_the_target(tmp_path):
+    target = tmp_path / "target"
+    (target / "keep").mkdir(parents=True)
+    link = tmp_path / "link"
+    assert pe.make_dir_link(target, link, junction=True) in ("symlink", "junction")
+    assert (link / "keep").is_dir()
+    pe.remove_dir_link(link)
+    assert not os.path.lexists(link) and (target / "keep").is_dir()
+
+
+@linux_only
+def test_remove_dir_link_removes_a_dangling_link(tmp_path):
+    link = tmp_path / "link"
+    os.symlink(tmp_path / "gone", link, target_is_directory=True)
+    pe.remove_dir_link(link)
+    assert not os.path.lexists(link)
+
+
+@linux_only
+def test_fix_hint_commands_on_linux(tmp_path):
+    link, folder = tmp_path / "it's a link", tmp_path / "plain"
+    os.symlink(tmp_path, link)
+    folder.mkdir()
+    assert pe.link_cmd("/p/Mods", "/games/DayZ/!Workshop") == "ln -s '/games/DayZ/!Workshop' /p/Mods"
+    assert pe.unlink_cmd(link) == f"rm '{tmp_path}/it'\"'\"'s a link'"
+    assert pe.unlink_cmd(folder) == f"rmdir {folder}"
+    assert pe.rmtree_cmd(folder) == f"rm -rf {folder}"
+
+
+@windows_only
+def test_fix_hint_commands_on_windows():
+    assert pe.link_cmd(r"P:\Mods", r"C:\DayZ\!Workshop") == r'cmd /c mklink /J "P:\Mods" "C:\DayZ\!Workshop"'
+    assert pe.unlink_cmd(r"P:\Mods") == r'cmd /c rmdir "P:\Mods"'
+    assert pe.rmtree_cmd(r"C:\x y") == r'cmd /c rmdir /s /q "C:\x y"'
+
+
+# ------------------------------------------------------------ processes
+
+@pytest.mark.parametrize("argv0, name", [
+    (r"C:\Program Files\DayZ\DayZDiag_x64.exe", "DayZDiag_x64.exe"),
+    ("Z:\\home\\me\\DayZ/DayZDiag_x64.exe", "DayZDiag_x64.exe"),
+    ("/home/me/.local/share/Steam/ubuntu12_32/steam", "steam"),
+    ("steam", "steam"),
+])
+def test_image_name(argv0, name):
+    assert pe.image_name(argv0) == name
+
+
+def _fake_proc(root: Path, procs: dict) -> Path:
+    for pid, argv in procs.items():
+        (root / str(pid)).mkdir(parents=True)
+        (root / str(pid) / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
+    (root / "self").mkdir()  # not a pid
+    (root / "999").mkdir()  # exited meanwhile: no cmdline
+    return root
+
+
+def test_posix_processes_matches_the_program_name_in_any_case(tmp_path):
+    proc = _fake_proc(tmp_path, {
+        12: [r"Z:\games\DayZ\DayZDiag_x64.exe", "-server", "-port=2302"],
+        7: [r"C:\DayZ\dayzdiag_x64.exe"],
+        30: ["/usr/bin/python3", "proton", "run", r"Z:\games\DayZ\DayZDiag_x64.exe"],  # the launcher, not DayZ
+        41: ["/usr/bin/bash"],
+    })
+    assert pe.posix_processes("DayZDiag_x64.exe", proc) == [
+        (7, r"C:\DayZ\dayzdiag_x64.exe"),
+        (12, r"Z:\games\DayZ\DayZDiag_x64.exe -server -port=2302"),
+    ]
+
+
+def test_posix_processes_none_when_proc_cannot_be_listed(tmp_path):
+    assert pe.posix_processes("x", tmp_path / "missing") is None
+
+
+def test_kill_posix_processes_skips_processes_that_already_exited(monkeypatch):
+    monkeypatch.setattr(pe, "posix_processes", lambda image: [(5, "a"), (6, "b")])
+
+    def kill(pid, sig):
+        if pid == 5:
+            raise ProcessLookupError
+    monkeypatch.setattr(pe.os, "kill", kill)
+    assert pe.kill_posix_processes("x") == ([6], [])
+
+
+def test_detach_kwargs():
+    kwargs = pe.detach_kwargs()
+    assert kwargs == ({"creationflags": pe.DETACH_FLAGS} if sys.platform == "win32" else {"start_new_session": True})

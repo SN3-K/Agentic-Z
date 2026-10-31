@@ -23,6 +23,9 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+# Module-level so tests can take the Windows branches on any OS (patching os.name breaks pathlib).
+IS_WINDOWS = os.name == "nt"
+
 
 def script_dir() -> Path:
     return Path(__file__).resolve().parent
@@ -171,7 +174,7 @@ def make_link(src: Path, dst: Path) -> str:
         os.symlink(src, dst, target_is_directory=True)
         return "symlink"
     except OSError:
-        if os.name == "nt":
+        if IS_WINDOWS:
             try:
                 subprocess.run(
                     ["cmd", "/c", "mklink", "/J", str(dst), str(src)],
@@ -186,7 +189,7 @@ def make_link(src: Path, dst: Path) -> str:
 
 def remove_link(p: Path) -> None:
     """Remove a symlink/junction without descending into the target."""
-    if os.name == "nt":
+    if IS_WINDOWS:
         try:
             subprocess.run(["cmd", "/c", "rmdir", str(p)], check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
@@ -444,7 +447,7 @@ def main() -> int:
     for k in ("linked", "ok", "refreshed", "skipped", "pruned", "failed"):
         print(f"  {summary_label(k, args.dry_run):>14}: {totals.get(k, 0)}")
 
-    if link_failed and os.name == "nt":
+    if link_failed and IS_WINDOWS:
         print()
         print("Note: a link only fails after the junction fallback has failed too, so Developer Mode")
         print("      is not the cause. Check that you can write to the target skills folder and that")

@@ -161,7 +161,7 @@ def clone_repo(src: GitSource, target: Path) -> None:
             remove_clone(target)
             note = f"Removed the partial clone at {_display(target)} so the retry starts clean."
         except OSError:
-            note = f"Could not remove the partial clone; delete it with: cmd /c rmdir /s /q \"{target}\""
+            note = f"Could not remove the partial clone; delete it with: {h.rmtree_cmd(target)}"
         sys.exit(f"{FAIL} Clone of {src.url} interrupted.\n       {note}")
     if result.returncode != 0:
         remove_clone(target)
@@ -457,7 +457,7 @@ def link_source(source: Path, workspace_target: Path, p_drive_link: Path) -> Non
             _nm._remove_link(workspace_target)
             rollback = "Workspace link rolled back."
         except (OSError, subprocess.CalledProcessError):
-            rollback = f"Could not roll back {workspace_target}; remove it with: cmd /c rmdir \"{workspace_target}\""
+            rollback = f"Could not roll back {workspace_target}; remove it with: {h.unlink_cmd(workspace_target)}"
         sys.exit(f"{FAIL} Failed to create {p_drive_link} junction: {e}\n       {rollback}")
     print(f"{OK} {p_drive_link} -> {_display(workspace_target)} ({kind_p})")
 
@@ -551,8 +551,8 @@ def import_from_git(src: GitSource, args: argparse.Namespace) -> int:
     return finish(workspace_target, workspace_target, modname, missing, args,
                   "Remove the clone: it holds .git, so /dayz-clean-workspace refuses it. Push anything\n"
                   "    worth keeping, then delete it by hand:\n"
-                  f"    cmd /c rmdir \"{p_drive_link}\"\n"
-                  f"    cmd /c rmdir /s /q \"{_display(workspace_target)}\"")
+                  f"    {h.unlink_cmd(p_drive_link)}\n"
+                  f"    {h.rmtree_cmd(_display(workspace_target))}")
 
 
 def split_subfolder(src: GitSource) -> tuple[GitSource, Optional[str]]:

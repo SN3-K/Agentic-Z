@@ -280,7 +280,7 @@ def test_github_link_clones_into_workspace_and_links_p(git_project, monkeypatch,
     # clean-workspace refuses folders that hold .git, so the hint must not send the user there.
     assert "/dayz-clean-workspace --mod MyMod" not in out
     assert "holds .git, so /dayz-clean-workspace refuses it" in out
-    assert "cmd /c rmdir /s /q" in out
+    assert imp.h.rmtree_cmd("x").rsplit(" ", 1)[0] in out  # cmd /c rmdir /s /q, or rm -rf on Linux
 
 
 def test_github_link_with_invalid_repo_name_needs_name(git_project, monkeypatch):
@@ -561,7 +561,7 @@ def test_interrupted_clone_that_cannot_be_removed_names_the_rmdir(monkeypatch, t
     target = tmp_path / "MyMod"
     with pytest.raises(SystemExit) as exc:
         imp.clone_repo(imp.GitSource("https://github.com/Owner/MyMod.git", "MyMod", None), target)
-    assert f'cmd /c rmdir /s /q "{target}"' in str(exc.value.code)
+    assert imp.h.rmtree_cmd(target) in str(exc.value.code)
 
 
 def test_interrupted_repo_link_clone_lets_the_retry_run(git_project, monkeypatch):
@@ -657,7 +657,7 @@ def test_link_source_reports_a_failed_rollback(tmp_path, monkeypatch, workspace)
     monkeypatch.setattr(imp._nm, "_remove_link", no_remove)
     with pytest.raises(SystemExit) as exc:
         imp.link_source(source, workspace / "MyMod", p_drive / "MyMod")
-    assert f'Could not roll back {workspace / "MyMod"}; remove it with: cmd /c rmdir' in str(exc.value.code)
+    assert f'Could not roll back {workspace / "MyMod"}; remove it with: {imp.h.unlink_cmd(workspace / "MyMod")}' in str(exc.value.code)
 
 
 def test_finish_accepts_prefix_equal_to_the_mod_name(tmp_path, capsys):

@@ -193,6 +193,7 @@ def test_udp_port_free_detects_a_held_port():
 
 
 def test_steam_running_reads_tasklist(monkeypatch):
+    monkeypatch.setattr(h, "IS_WINDOWS", True)
     row = '"steam.exe","43900","Console","1","605,712 K"\n'
     monkeypatch.setattr(h.subprocess, "run", lambda *a, **k: h.subprocess.CompletedProcess(a, 0, row, ""))
     assert h.steam_running()
@@ -202,3 +203,13 @@ def test_steam_running_reads_tasklist(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         h.gate_on_steam()
     assert "Steam is not running" in str(exc.value.code)
+
+
+def test_steam_running_on_linux_reads_the_process_list(monkeypatch):
+    monkeypatch.setattr(h, "IS_WINDOWS", False)
+    monkeypatch.setattr(h, "posix_processes", lambda image: [(7, "/home/me/.local/share/Steam/ubuntu12_32/steam")])
+    assert h.steam_running()
+    monkeypatch.setattr(h, "posix_processes", lambda image: [])
+    assert not h.steam_running()
+    monkeypatch.setattr(h, "posix_processes", lambda image: None)  # /proc unreadable: do not block the launch
+    assert h.steam_running()

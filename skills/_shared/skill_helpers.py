@@ -7,10 +7,12 @@ One copy of the logic every pipeline script needs:
   - the cached project root written by /dayz-init (resolve_project_dir)
   - link inspection that never follows a junction (is_link, link_target, paths_equal)
   - the P:\\Mods\\@<ModName>\\ ownership marker (owns_deploy_dir, gate_on_marker, write_marker)
-  - creation flags that detach a launched GUI tool from the console (DETACH_FLAGS)
+  - Popen arguments that detach a launched GUI tool from the console (detach_kwargs, DETACH_FLAGS)
   - the active allowFilePatching setting in a serverDZ.cfg (file_patching_setting)
   - the free-UDP-port check run before a server launch (udp_port_free, gate_on_free_port)
   - the OS-specific work drive folder from platform_env (IS_WINDOWS, p_root, child_ci)
+  - directory links and the fix-hint commands for them (make_dir_link, remove_dir_link,
+    link_cmd, unlink_cmd, rmtree_cmd) and Linux process lookup (posix_processes)
 
 Import from a skill script with:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
@@ -29,7 +31,10 @@ from types import ModuleType
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from platform_env import IS_WINDOWS, child_ci, p_root, p_root_hint, to_wine_path  # noqa: E402,F401
+from platform_env import (  # noqa: E402,F401
+    DETACH_FLAGS, IS_WINDOWS, child_ci, detach_kwargs, kill_posix_processes, link_cmd, make_dir_link,
+    p_root, p_root_hint, posix_processes, remove_dir_link, rmtree_cmd, to_wine_path, unlink_cmd,
+)
 
 SKILLS_DIR = Path(__file__).resolve().parents[1]
 PREFLIGHT = SKILLS_DIR / "dayz-preflight" / "preflight.py"
@@ -42,10 +47,6 @@ DAYZ_INIT_STATE = SKILLS_DIR / "dayz-init" / "state.py"
 # or hand-placed mod with a colliding name is never touched. It sits one level
 # above Addons\ so AddonBuilder's -clear (which wipes Addons\) keeps it.
 SCAFFOLD_MARKER = ".agentic-z-scaffold"
-
-# Popen creationflags for a GUI tool that must outlive this script and the
-# console it ran in: DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP.
-DETACH_FLAGS = 0x00000008 | 0x00000200
 
 # An active `allowFilePatching = N` line in serverDZ.cfg. Anchored at the start
 # of a line, so a commented-out `// allowFilePatching = 1;` does not count.
@@ -181,7 +182,7 @@ def gate_on_marker(modname: str, deploy_root: Path) -> None:
             f"{FAIL} {deploy_root}\\ exists but has no Agentic-Z ownership marker\n"
             f"       ({SCAFFOLD_MARKER} missing or content mismatch).\n"
             "       Refusing to write into it: it could be a subscribed mod or a hand-placed folder.\n"
-            f"       If it is yours, remove it first: cmd /c rmdir /s /q \"{deploy_root}\""
+            f"       If it is yours, remove it first: {rmtree_cmd(deploy_root)}"
         )
     print(f"{OK} {deploy_root}\\ ownership marker valid")
 
@@ -223,7 +224,10 @@ def udp_port_free(port: int) -> bool:
 
 
 def steam_running() -> bool:
-    """True when steam.exe is in the Windows process list."""
+    """True when steam.exe is in the Windows process list, or steam runs on Linux."""
+    if not IS_WINDOWS:
+        found = posix_processes("steam")
+        return True if found is None else bool(found)  # unknown: let the launch go ahead
     try:
         out = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq steam.exe", "/FO", "CSV", "/NH"],

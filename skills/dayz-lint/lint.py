@@ -521,8 +521,8 @@ def lint_mod(
     which checks the link itself. project_dir: for the learned known-errors
     file used in triage. in_workspace=False: the folder is not
     <project>\\workspace\\<ModName>\\, so fixes that name /dayz-add-scaffold,
-    which only works on workspace mods, point at /dayz-import-mod, mklink /J
-    or a hand edit instead.
+    which only works on workspace mods, point at /dayz-import-mod, a by-hand
+    link (mklink /J, or ln -s on Linux) or a hand edit instead.
     """
     if not mod_dir.is_dir():
         raise LintError(f"{mod_dir} not found")
@@ -562,7 +562,7 @@ def outside_fix(rule: str, mod: str, folder: str, link: Path, mod_dir: Path) -> 
     """The fix for a folder outside workspace\\, where /dayz-add-scaffold refuses to run; None keeps the catalog fix."""
     if rule == "p-link":
         return (f'Run /dayz-import-mod --source "{mod_dir}" to link it into workspace\\ and create {link}, '
-                f'or link it by hand: mklink /J "{link}" "{mod_dir}".')
+                f'or link it by hand: {h.link_cmd(link, mod_dir)}.')
     if rule == "pboprefix-missing":
         return f"Create {folder}/$PBOPREFIX$ holding the single line {mod}."
     if rule == "config-missing":

@@ -379,8 +379,8 @@ def test_launch_pair_spawns_server_after_free_port_check(monkeypatch, tmp_path):
     monkeypatch.setattr(cot.h, "gate_on_steam", lambda: order.append("steam"))
     flags = []
 
-    def fake_popen(cmd, cwd=None, creationflags=0):
-        flags.append(creationflags)
+    def fake_popen(cmd, cwd=None, **kwargs):
+        flags.append(kwargs)
         order.append("spawn")
         return FakeProc(len(order))
 
@@ -392,7 +392,7 @@ def test_launch_pair_spawns_server_after_free_port_check(monkeypatch, tmp_path):
     )
     assert order == ["check", "steam", "spawn", "spawn"] and len(procs) == 2
     # Detached like /dayz-launch-test, so closing the shell leaves pass 2 running.
-    assert flags == [cot.h.DETACH_FLAGS, cot.h.DETACH_FLAGS]
+    assert flags == [cot.h.detach_kwargs()] * 2
 
 
 def _launch_pair_with(monkeypatch, tmp_path, popen, wait_for_port):

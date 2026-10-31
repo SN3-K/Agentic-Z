@@ -6,6 +6,11 @@ DayZ Server run under Steam Proton, and P: is a drive letter inside the DayZ
 Tools Proton prefix that points at an ordinary Linux folder. Every skill reads
 that folder through p_root(), so the rest of the code only sees a Path.
 
+It also holds the few OS calls the skills share: directory links (a junction
+or symlink on Windows, a symlink on Linux), the shell commands quoted in fix
+hints, finding and killing processes by image name on Linux, and the Popen
+arguments that detach a launched program.
+
 Stdlib only, and it imports nothing else from the repo, so dayz-preflight and
 the skills that do not load skill_helpers can import it directly:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
@@ -16,6 +21,9 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import shlex
+import signal
+import subprocess
 import sys
 from pathlib import Path, PureWindowsPath
 from typing import Optional
@@ -29,6 +37,10 @@ DAYZ_TOOLS_APPID = "830640"
 # this is never a directory and nothing can be created under it: every
 # "is P mounted" check fails and no write lands somewhere unexpected.
 NO_P_ROOT = Path("/dev/null/P")
+
+# Popen creationflags for a program that must outlive this script and the
+# console it ran in: DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP.
+DETACH_FLAGS = 0x00000008 | 0x00000200
 
 
 def linux_steam_roots() -> list[Path]:
@@ -194,3 +206,126 @@ def to_wine_path(path: Path, root: Optional[Path] = None) -> str:
     except ValueError:
         return str(PureWindowsPath("Z:\\", *full.parts[1:]))
     return str(PureWindowsPath("P:\\", *rel.parts))
+
+
+# ------------------------------------------------------------ directory links
+
+def make_dir_link(target: Path, link: Path, junction: bool = False) -> str:
+    """Create `link` pointing at the folder `target`; returns "symlink" or "junction".
+
+    Windows: a directory symlink, falling back to a junction (mklink /J needs no
+    admin rights) when symlinks need elevation; junction=True goes straight to
+    the junction. Linux: a symlink. Raises OSError with mklink's own message.
+    """
+    if IS_WINDOWS:
+        if not junction:
+            try:
+                os.symlink(target, link, target_is_directory=True)
+                return "symlink"
+            except OSError:
+                pass
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise OSError(detail or f"mklink exited {result.returncode}")
+        return "junction"
+    os.symlink(target, link, target_is_directory=True)
+    return "symlink"
+
+
+def remove_dir_link(path: Path) -> None:
+    """Remove a junction or directory symlink, never its target.
+
+    Windows: rmdir on a reparse point deletes only the link, even when it
+    dangles or its target is not empty. Linux: unlink (rmdir refuses a symlink).
+    """
+    if IS_WINDOWS:
+        os.rmdir(path)
+    else:
+        os.unlink(path)
+
+
+def _quote(path) -> str:
+    return f'"{path}"' if IS_WINDOWS else shlex.quote(str(path))
+
+
+def link_cmd(link, target) -> str:
+    """The shell command a user runs to create a directory link, for fix hints."""
+    if IS_WINDOWS:
+        return f"cmd /c mklink /J {_quote(link)} {_quote(target)}"
+    return f"ln -s {_quote(target)} {_quote(link)}"
+
+
+def unlink_cmd(path) -> str:
+    """The shell command that removes a directory link (or an empty folder) only."""
+    if IS_WINDOWS:
+        return f"cmd /c rmdir {_quote(path)}"
+    return f"rm {_quote(path)}" if os.path.islink(path) else f"rmdir {_quote(path)}"
+
+
+def rmtree_cmd(path) -> str:
+    """The shell command that deletes a folder and everything in it."""
+    if IS_WINDOWS:
+        return f"cmd /c rmdir /s /q {_quote(path)}"
+    return f"rm -rf {_quote(path)}"
+
+
+# ------------------------------------------------------------ processes (Linux)
+
+def image_name(argv0: str) -> str:
+    """The program name in argv[0]: the part after the last / or \\.
+
+    Wine shows a Windows program's argv[0] as its Windows path
+    (C:\\...\\DayZDiag_x64.exe), so both separators count.
+    """
+    return re.split(r"[\\/]", argv0)[-1]
+
+
+def posix_processes(image: str, proc: Path = Path("/proc")) -> Optional[list[tuple[int, str]]]:
+    """(pid, command line) of every process whose image name is `image` (any case).
+
+    Reads /proc/<pid>/cmdline, so it also finds Windows programs running under
+    Proton/Wine, whose /proc comm is cut to 15 characters. Processes that exit
+    or cannot be read meanwhile are skipped. None when /proc cannot be listed.
+    """
+    try:
+        entries = [e for e in os.listdir(proc) if e.isdigit()]
+    except OSError:
+        return None
+    found = []
+    for entry in entries:
+        try:
+            raw = (proc / entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        argv = raw.decode("utf-8", errors="replace").split("\0")
+        if argv and argv[-1] == "":
+            argv.pop()
+        if argv and image_name(argv[0]).lower() == image.lower():
+            found.append((int(entry), " ".join(argv)))
+    return sorted(found)
+
+
+def kill_posix_processes(image: str) -> tuple[list[int], list[str]]:
+    """SIGKILL every process named `image` (taskkill /F). Returns (killed pids, errors)."""
+    killed, errors = [], []
+    for pid, _ in posix_processes(image) or []:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue  # exited meanwhile: already the wanted end state
+        except OSError as e:
+            errors.append(f"PID {pid}: {e.strerror or e}")
+            continue
+        killed.append(pid)
+    return killed, errors
+
+
+def detach_kwargs() -> dict:
+    """Popen arguments for a program that must outlive this script and its console.
+
+    Windows: DETACH_FLAGS. Linux: a new session, so closing the shell does not
+    send it SIGHUP.
+    """
+    return {"creationflags": DETACH_FLAGS} if IS_WINDOWS else {"start_new_session": True}

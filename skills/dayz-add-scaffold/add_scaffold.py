@@ -246,7 +246,7 @@ def add_junction(target: Path, modname: str) -> str:
         if not h.paths_equal(current, target):
             sys.exit(
                 f"{FAIL} {p_link} is a link pointing at {current}\n"
-                f"       Remove it (cmd /c rmdir \"{p_link}\") and re-run."
+                f"       Remove it ({h.unlink_cmd(p_link)}) and re-run."
             )
         print(f"{SKIP} {p_link} present (links to {shown})")
         return PRESENT

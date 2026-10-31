@@ -25,7 +25,10 @@ from typing import Optional
 
 HERE = Path(__file__).resolve().parent
 STATE_PY = HERE.parent / "dayz-init" / "state.py"
-P_DRIVE = Path("P:\\")
+sys.path.insert(0, str(HERE.parent / "_shared"))
+import platform_env  # noqa: E402  stdlib only: the P: folder on Linux, /proc process lookup
+
+P_DRIVE = platform_env.p_root()
 MANIFEST = Path.home() / ".claude" / "dayz-search-index" / "manifest.json"
 CACHE_FILE = Path(tempfile.gettempdir()) / "agentic-z-statusline.json"
 CACHE_TTL = 5.0  # seconds
@@ -41,9 +44,9 @@ def p_mounted() -> bool:
 
 def diag_running() -> bool:
     """True if any DayZDiag_x64.exe process exists. Toolhelp snapshot via ctypes:
-    a few ms, where spawning tasklist costs 100-300 ms."""
+    a few ms, where spawning tasklist costs 100-300 ms. On Linux, a /proc scan."""
     if os.name != "nt":
-        return False
+        return bool(platform_env.posix_processes(DIAG_EXE))
     import ctypes
     from ctypes import wintypes
 

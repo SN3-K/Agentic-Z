@@ -70,10 +70,19 @@ def test_objectbuilder_always_passes_mod(monkeypatch, tmp_path, model):
     assert argv[2:] == ["--mod", "MyMod"]
 
 
-def test_stop_runs_the_stop_test_batch_file():
+def test_stop_runs_the_stop_test_batch_file(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
     argv = command_for("stop")
     assert argv[:2] == ["cmd", "/c"]
     assert _script(argv) == SKILLS / "dayz-stop-test" / "stop_test.bat"
+    assert _script(argv).is_file()
+
+
+def test_stop_on_linux_runs_stop_test_py(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    argv = command_for("stop")
+    assert argv[0] == sys.executable
+    assert _script(argv) == SKILLS / "dayz-stop-test" / "stop_test.py"
     assert _script(argv).is_file()
 
 

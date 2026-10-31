@@ -68,7 +68,6 @@ def test_first_run_links_everything_then_second_run_is_ok(env):
     assert counts["ok"] == 3 and counts["linked"] == 0
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_failed_junction_shows_the_mklink_error(env, monkeypatch, capsys):
     _, _, target_dir, cfg = env
 
@@ -79,7 +78,7 @@ def test_failed_junction_shows_the_mklink_error(env, monkeypatch, capsys):
         raise sync.subprocess.CalledProcessError(1, cmd, output="", stderr="Access is denied.\n")
 
     monkeypatch.setattr(sync.os, "symlink", no_symlink)
-    monkeypatch.setattr(sync.os, "name", "nt")
+    monkeypatch.setattr(sync, "IS_WINDOWS", True)
     monkeypatch.setattr(sync.subprocess, "run", mklink_fails)
     counts = sync.sync_one(cfg, sync.list_repo_skills(), dry_run=False, force=False)
     assert counts["failed"] == 3 and counts["linked"] == 0
@@ -161,7 +160,7 @@ def test_remove_link_on_windows_reports_rmdir_error(monkeypatch, tmp_path):
     def rmdir_fails(cmd, **kwargs):
         raise sync.subprocess.CalledProcessError(2, cmd, output="", stderr="The process cannot access the file.\n")
 
-    monkeypatch.setattr(sync.os, "name", "nt")
+    monkeypatch.setattr(sync, "IS_WINDOWS", True)
     monkeypatch.setattr(sync.subprocess, "run", rmdir_fails)
     with pytest.raises(OSError, match="rmdir failed: The process cannot access the file."):
         sync.remove_link(tmp_path / "x")
@@ -259,22 +258,21 @@ def test_unwritable_skills_folder_fails_without_a_traceback(env, monkeypatch, ca
 def test_junction_note_only_follows_a_failed_link(monkeypatch, env, capsys, counts, note):
     monkeypatch.setattr(sync, "load_agents_config", lambda: [{"name": "codex"}])
     monkeypatch.setattr(sync, "sync_one", lambda cfg, *a: dict(counts))
-    monkeypatch.setattr(sync.os, "name", "nt")
+    monkeypatch.setattr(sync, "IS_WINDOWS", True)
     monkeypatch.setattr(sync.sys, "argv", ["sync.py"])
     assert sync.main() == 1
     assert ("junction fallback" in capsys.readouterr().out) is note
 
 
 def _main_on_nt(monkeypatch, cfg):
-    """Run the real sync_one through main() as if on Windows; os.name is patched
+    """Run the real sync_one through main() as if on Windows; IS_WINDOWS is patched
     only after setup so the helpers still use this platform's link calls."""
     monkeypatch.setattr(sync, "load_agents_config", lambda: [cfg])
     monkeypatch.setattr(sync.sys, "argv", ["sync.py"])
-    monkeypatch.setattr(sync.os, "name", "nt")
+    monkeypatch.setattr(sync, "IS_WINDOWS", True)
     return sync.main()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_note_skipped_when_only_old_link_removal_failed(env, monkeypatch, capsys):
     _, skills, target_dir, cfg = env
     target_dir.mkdir(parents=True)
@@ -289,7 +287,6 @@ def test_junction_note_skipped_when_only_old_link_removal_failed(env, monkeypatc
     assert "cannot remove old link" in out and "junction fallback" not in out
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_note_skipped_when_only_prune_failed(env, monkeypatch, capsys):
     _, skills, target_dir, cfg = env
     target_dir.mkdir(parents=True)
@@ -304,7 +301,6 @@ def test_junction_note_skipped_when_only_prune_failed(env, monkeypatch, capsys):
     assert "[FAILED]  prune orphan" in out and "junction fallback" not in out
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_note_shown_when_make_link_failed(env, monkeypatch, capsys):
     _, _, _, cfg = env
 

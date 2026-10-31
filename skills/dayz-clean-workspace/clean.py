@@ -100,7 +100,7 @@ def unmanaged_reason(path: Path) -> str | None:
 
 
 def _manual_hint(path: Path) -> str:
-    return f"If you are sure it can go, remove it by hand: cmd /c rmdir /s /q \"{path}\""
+    return f"If you are sure it can go, remove it by hand: {h.rmtree_cmd(path)}"
 
 
 def discover_mods(workspace: Path, target: str | None) -> tuple[list[Path], list[str]]:
@@ -163,7 +163,7 @@ def find_artifacts(mod_path: Path) -> tuple[list[tuple[str, Path]], list[str]]:
                 f"{deployed}\\ exists but has no Agentic-Z ownership marker\n"
                 f"        ({h.SCAFFOLD_MARKER} missing or content mismatch).\n"
                 "        Skipping: it could be a subscribed mod or a hand-placed folder.\n"
-                f"        If it is yours, remove it manually: cmd /c rmdir /s /q \"{deployed}\""
+                f"        If it is yours, remove it manually: {h.rmtree_cmd(deployed)}"
             )
 
     if has_junction_to(mod_path):
@@ -199,8 +199,11 @@ def remove_artifact(kind: str, path: Path) -> None:
     if kind in ("junction", "workspace-link"):
         # Never recurse into a link's target: shutil.rmtree on a Windows
         # junction walks into it and would delete an imported mod's external
-        # source. cmd /c rmdir removes only the link.
-        subprocess.run(["cmd", "/c", "rmdir", str(path)], check=True, capture_output=True, text=True)
+        # source. cmd /c rmdir removes only the link; on Linux unlink does.
+        if h.IS_WINDOWS:
+            subprocess.run(["cmd", "/c", "rmdir", str(path)], check=True, capture_output=True, text=True)
+        else:
+            h.remove_dir_link(path)
     elif kind == "workspace-files":
         _clear_dir(path)
     elif kind == "workspace":
@@ -215,7 +218,9 @@ def remove_artifact(kind: str, path: Path) -> None:
 
 
 def running_blockers() -> list[str]:
-    """The BLOCKING_EXES that are running now (tasklist, one query per name)."""
+    """The BLOCKING_EXES that are running now (tasklist, one query per name; /proc on Linux)."""
+    if not h.IS_WINDOWS:
+        return [exe for exe in BLOCKING_EXES if h.posix_processes(exe)]
     found = []
     for exe in BLOCKING_EXES:
         out = subprocess.run(

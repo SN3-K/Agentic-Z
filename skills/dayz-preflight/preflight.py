@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -411,15 +410,11 @@ def link_target(path: Path) -> Optional[Path]:
 
 
 def _create_junction(link: Path, target: Path) -> None:
-    """Create a directory junction (mklink /J needs no admin rights). Raises OSError on failure."""
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise OSError(detail or f"mklink exited {result.returncode}")
+    """Create a directory junction (mklink /J needs no admin rights), a symlink on Linux.
+
+    Raises OSError on failure, with mklink's own message on Windows.
+    """
+    platform_env.make_dir_link(target, link, junction=True)
 
 
 def paths_equal(a: Path, b: Path) -> bool:
@@ -449,7 +444,12 @@ def validate_p_mods() -> Optional[str]:
     game_root = find_dayz_game()
     workshop = game_root / "!Workshop" if game_root else None
     expected = str(workshop) if workshop else "<DayZ install>\\!Workshop"
-    fix_cmd = f'cmd /c mklink /J P:\\Mods "{expected}"'
+    if platform_env.IS_WINDOWS:
+        fix_cmd = f'cmd /c mklink /J P:\\Mods "{expected}"'
+        rm_cmd = "cmd /c rmdir P:\\Mods"
+    else:  # P:\Mods is a folder path here; the junction is a symlink
+        fix_cmd = platform_env.link_cmd(mods, expected)
+        rm_cmd = platform_env.unlink_cmd(mods)
 
     if not os.path.lexists(mods):
         if workshop is None:
@@ -482,7 +482,7 @@ def validate_p_mods() -> Optional[str]:
             "       Built PBOs deployed under P:\\Mods\\@<Mod>\\Addons\\ will be\n"
             "       invisible to the engine.\n"
             "       Fix: move its contents out, remove the folder and create a junction:\n"
-            "         cmd /c rmdir P:\\Mods\n"
+            f"         {rm_cmd}\n"
             f"         {fix_cmd}"
         )
 
@@ -490,7 +490,7 @@ def validate_p_mods() -> Optional[str]:
         return (
             f"P:\\Mods\\ junction is dangling (target {target_path} is missing).\n"
             "       Fix: remove and recreate the junction with a valid target:\n"
-            "         cmd /c rmdir P:\\Mods\n"
+            f"         {rm_cmd}\n"
             f"         {fix_cmd}"
         )
 
@@ -503,7 +503,7 @@ def validate_p_mods() -> Optional[str]:
             f"P:\\Mods\\ points to {target_path}, not {expected}.\n"
             "       Built PBOs would not land where the engine loads mods.\n"
             "       Fix: remove and recreate the junction:\n"
-            "         cmd /c rmdir P:\\Mods\n"
+            f"         {rm_cmd}\n"
             f"         {fix_cmd}"
         )
 

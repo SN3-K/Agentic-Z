@@ -353,7 +353,7 @@ def test_server_and_client_spawn_detached(monkeypatch, tmp_path):
     assert launch.main() == 0
     assert len(spawns) == 2  # server, then client
     for kwargs in spawns:
-        assert kwargs["creationflags"] == launch.h.DETACH_FLAGS
+        assert launch.h.detach_kwargs().items() <= kwargs.items()
         assert kwargs["close_fds"] is True
 
 

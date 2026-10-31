@@ -247,7 +247,7 @@ def main() -> int:
         proc = subprocess.Popen(
             cmd,
             close_fds=True,
-            creationflags=h.DETACH_FLAGS,
+            **h.detach_kwargs(),
             cwd=str(workbench_dir),
         )
     except OSError as exc:

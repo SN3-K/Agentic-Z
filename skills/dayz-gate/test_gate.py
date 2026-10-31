@@ -43,7 +43,7 @@ class FakeRuntime:
     def run(self, cmd: list[str]) -> tuple[int, str]:
         self.calls.append(cmd)
         joined = " ".join(cmd)
-        if "stop_test.bat" in joined:
+        if "stop_test." in joined:
             self.running = list(self.stop_leaves)
             return self.stop_rc, "SUCCESS: terminated" if self.stop_rc == 0 else "ERROR: Access is denied."
         for key, result in self.results.items():
@@ -72,7 +72,7 @@ class FakeRuntime:
         return any(name in " ".join(c) for c in self.calls)
 
     def stops(self) -> int:
-        return sum("stop_test.bat" in " ".join(c) for c in self.calls)
+        return sum("stop_test." in " ".join(c) for c in self.calls)
 
 
 @pytest.fixture
@@ -152,11 +152,23 @@ def test_stop_session_noop_when_nothing_runs():
     assert fake.calls == []
 
 
-def test_stop_session_runs_stop_test_bat():
+def test_stop_session_runs_stop_test(monkeypatch):
     fake = FakeRuntime(running=[5])
     step = gate.stop_session(fake.runtime(), started_by_gate=True)
     assert "stopped PIDs [5]" in step["result"]
-    assert fake.calls[0][:2] == ["cmd", "/c"] and fake.calls[0][2].endswith("stop_test.bat")
+    assert fake.calls[0] == gate.stop_cmd()
+    monkeypatch.setattr(gate.h, "IS_WINDOWS", True)
+    assert gate.stop_cmd()[:2] == ["cmd", "/c"] and gate.stop_cmd()[2].endswith("stop_test.bat")
+    monkeypatch.setattr(gate.h, "IS_WINDOWS", False)
+    assert gate.stop_cmd() == [gate.sys.executable, str(gate.STOP_PY)]
+
+
+def test_real_runtime_on_linux_reads_diag_pids_from_the_process_list(monkeypatch):
+    monkeypatch.setattr(gate.h, "IS_WINDOWS", False)
+    monkeypatch.setattr(gate.h, "posix_processes", lambda image: [(41, r"Z:\\DayZ\\DayZDiag_x64.exe -server")])
+    rt = gate.real_runtime()
+    assert rt.diag_pids() == [41]
+    assert rt.pid_alive(41) and not rt.pid_alive(42)
 
 
 def test_stop_session_failure_is_gate_error():
@@ -347,7 +359,7 @@ def test_build_stops_running_session_first(project, capsys):
     fake = FakeRuntime({"build.py": (0, BUILD_OK)}, running=[42])
     rc, _, data = run_main(["build", "MyMod", "--json", "--yes"], fake, capsys)
     assert rc == 0
-    assert "stop_test.bat" in " ".join(fake.calls[0]) and "build.py" in " ".join(fake.calls[1])
+    assert "stop_test." in " ".join(fake.calls[0]) and "build.py" in " ".join(fake.calls[1])
     assert data["steps"][0]["result"] == "stopped PIDs [42]"
 
 

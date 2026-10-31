@@ -93,6 +93,33 @@ def test_p_drive_paths(tmp_path, path, blocked):
     assert (_denied(_run(p, path)) is not None) is blocked
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="P: is a folder only on Linux")
+@pytest.mark.parametrize(
+    "rel, blocked",
+    [
+        ("OtherMod/config.cpp", True),
+        ("Mods/@OtherMod/Addons/OtherMod.pbo", True),
+        ("MyVest/config.cpp", False),
+        ("DZ/data/config.cpp", False),
+        ("Mods/@CF/Addons/x.pbo", False),
+    ],
+)
+def test_linux_p_folder_paths(tmp_path, rel, blocked):
+    p = _project(tmp_path / "proj")
+    p_root = tmp_path / "dayz-p"
+    r = _run(p, str(p_root / rel), extra_env={"DAYZ_P_ROOT": str(p_root)})
+    assert (_denied(r) is not None) is blocked
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="P: is a folder only on Linux")
+def test_linux_p_folder_write_by_shell_is_blocked(tmp_path):
+    p = _project(tmp_path / "proj")
+    p_root = tmp_path / "dayz-p"
+    cmd = f"echo x > {p_root}/OtherMod/config.cpp"
+    r = _run(p, "", tool="Bash", tool_input={"command": cmd}, extra_env={"DAYZ_P_ROOT": str(p_root)})
+    assert _denied(r)
+
+
 def test_no_scope_means_no_output(tmp_path):
     p = _project(tmp_path, active=None)
     assert _denied(_run(p, str(p / "workspace" / "OtherMod" / "config.cpp"))) is None

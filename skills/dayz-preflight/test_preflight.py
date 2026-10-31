@@ -167,7 +167,8 @@ def test_absent_mods_create_failure_is_reported(p_drive, game, monkeypatch):
 
     monkeypatch.setattr(preflight, "_create_junction", boom)
     err = preflight.validate_p_mods()
-    assert err and "Access is denied." in err and "mklink /J" in err
+    assert err and "Access is denied." in err
+    assert ("mklink /J" if preflight.platform_env.IS_WINDOWS else "ln -s ") in err
 
 
 def test_regular_folder_fails_and_is_left_alone(p_drive, game, fake_junctions):

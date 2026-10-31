@@ -5,7 +5,6 @@ import importlib.util
 import os
 import re
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -212,25 +211,23 @@ def test_main_refuses_mismatch_before_copying(monkeypatch, tmp_path):
 
 def test_template_junction_failure_exits_non_zero(monkeypatch, tmp_path):
     (tmp_path / ".server" / "test" / "mission").mkdir(parents=True)
-    monkeypatch.setattr(
-        srv.subprocess, "run",
-        lambda cmd, **k: srv.subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Access is denied."),
-    )
+
+    def denied(target, link, junction=False):
+        raise OSError("Access is denied.")  # mklink's own message, passed on by h.make_dir_link
+
+    monkeypatch.setattr(srv.h, "make_dir_link", denied)
     with pytest.raises(SystemExit) as exc:
         srv.setup_instance_dir("test", "dayzOffline.chernarusplus", tmp_path)
     assert "Access is denied." in str(exc.value.code)
 
 
-def test_template_junction_created_when_mission_present(monkeypatch, tmp_path):
-    (tmp_path / ".server" / "test" / "mission").mkdir(parents=True)
-    calls = []
-    monkeypatch.setattr(
-        srv.subprocess, "run",
-        lambda cmd, **k: calls.append(cmd) or srv.subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
-    )
+def test_template_junction_created_when_mission_present(tmp_path):
+    mission = tmp_path / ".server" / "test" / "mission"
+    mission.mkdir(parents=True)
     srv.setup_instance_dir("test", "dayzOffline.chernarusplus", tmp_path)
-    assert calls[0][:4] == ["cmd", "/c", "mklink", "/J"]
-    assert calls[0][4].endswith("dayzOffline.chernarusplus")
+    link = mission.parent / "dayzOffline.chernarusplus"
+    assert srv.h.is_link(link)  # a junction on Windows, a symlink on Linux
+    assert srv.h.paths_equal(srv.h.link_target(link), mission)
 
 
 @pytest.mark.parametrize("bad", ["", ".", "..", "..\\..\\x", "../x", "a/b", "C:x", "a*b", 'a"b'])
@@ -356,22 +353,20 @@ def test_commented_out_allow_file_patching_counts_as_missing(tmp_path):
 
 
 def make_junction(link: Path, target: Path) -> None:
-    """A real junction (mklink /J needs no admin rights)."""
-    srv.subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+    """A real junction (mklink /J needs no admin rights), or a symlink on Linux."""
+    srv.h.make_dir_link(target, link, junction=True)
     assert srv.h.is_link(link)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_existing_template_junction_reported_present(monkeypatch, tmp_path, capsys):
     inst = tmp_path / ".server" / "test"
     (inst / "mission").mkdir(parents=True)
     make_junction(inst / "dayzOffline.chernarusplus", inst / "mission")
-    monkeypatch.setattr(srv.subprocess, "run", lambda *a, **k: pytest.fail("must not recreate the junction"))
+    monkeypatch.setattr(srv.h, "make_dir_link", lambda *a, **k: pytest.fail("must not recreate the junction"))
     srv.setup_instance_dir("test", "dayzOffline.chernarusplus", tmp_path)
     assert "Junction dayzOffline.chernarusplus/ -> mission/ already present" in capsys.readouterr().out
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_dangling_junction_after_project_move_is_replaced(tmp_path, capsys):
     # The project used to live in old/; its junction now points at a folder that is gone.
     old_mission = tmp_path / "old" / "mission"
@@ -392,7 +387,6 @@ def test_dangling_junction_after_project_move_is_replaced(tmp_path, capsys):
     assert "Removed stale junction" in out and "(template handshake)" in out
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_to_another_copy_is_replaced_and_the_copy_is_kept(tmp_path, capsys):
     other = tmp_path / "other-clone" / "mission"
     other.mkdir(parents=True)
@@ -415,14 +409,13 @@ def test_real_folder_at_template_name_is_refused_and_kept(monkeypatch, tmp_path)
     real = inst / "dayzOffline.chernarusplus"
     real.mkdir()
     (real / "mine.txt").write_text("keep", encoding="utf-8")
-    monkeypatch.setattr(srv.subprocess, "run", lambda *a, **k: pytest.fail("must not run mklink over a real folder"))
+    monkeypatch.setattr(srv.h, "make_dir_link", lambda *a, **k: pytest.fail("must not link over a real folder"))
     with pytest.raises(SystemExit) as exc:
         srv.setup_instance_dir("test", "dayzOffline.chernarusplus", tmp_path)
     assert "real folder or file" in str(exc.value.code)
     assert (real / "mine.txt").read_text(encoding="utf-8") == "keep"
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_stale_junction_that_cannot_be_removed_exits_non_zero(monkeypatch, tmp_path):
     inst = tmp_path / ".server" / "test"
     (inst / "mission").mkdir(parents=True)
@@ -634,7 +627,6 @@ def test_same_template_rerun_is_accepted(server_install, tmp_path, capsys):
     assert "Mission already present" in capsys.readouterr().out
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_unmarked_mission_is_identified_by_its_old_junction(tmp_path):
     inst = tmp_path / ".server" / "test"
     mission_dir = inst / "mission"
@@ -655,7 +647,6 @@ def test_hand_filled_mission_without_marker_or_junction_is_accepted(tmp_path, ca
     assert "Mission already present" in capsys.readouterr().out
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_main_refuses_edited_cfg_template_without_refresh(server_install, monkeypatch, tmp_path):
     # The reviewer's case: cfg hand-edited to enoch, mission/ still holds Chernarus.
     inst = tmp_path / ".server" / "test"
@@ -675,7 +666,6 @@ def test_main_refuses_edited_cfg_template_without_refresh(server_install, monkey
     assert not os.path.lexists(inst / "dayzOffline.enoch")
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_template_switch_removes_the_old_junction(tmp_path, capsys):
     inst = tmp_path / ".server" / "test"
     mission_dir = inst / "mission"
@@ -691,7 +681,6 @@ def test_template_switch_removes_the_old_junction(tmp_path, capsys):
     assert "Removed junction dayzOffline.chernarusplus/" in capsys.readouterr().out
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_to_another_folder_is_not_treated_as_an_old_template(tmp_path):
     inst = tmp_path / ".server" / "test"
     (inst / "mission").mkdir(parents=True)

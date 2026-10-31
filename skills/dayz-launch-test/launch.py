@@ -603,10 +603,10 @@ def main() -> int:
     print()
     print(f"[Launch] Server: {subprocess.list2cmdline(server_cmd)}")
     sys.stdout.flush()
-    # Detached (shared DETACH_FLAGS) so closing or killing the agent's shell
+    # Detached (shared h.detach_kwargs) so closing or killing the agent's shell
     # does not take the server and client down with it.
     try:
-        server_proc = subprocess.Popen(server_cmd, close_fds=True, creationflags=h.DETACH_FLAGS)
+        server_proc = subprocess.Popen(server_cmd, close_fds=True, **h.detach_kwargs())
     except OSError as err:
         print(f"{FAIL} Failed to spawn DayZDiag_x64.exe: {err}")
         return 1
@@ -623,7 +623,7 @@ def main() -> int:
     print(f"[Launch] Client: {subprocess.list2cmdline(client_cmd)}")
     sys.stdout.flush()
     try:
-        client_proc = subprocess.Popen(client_cmd, close_fds=True, creationflags=h.DETACH_FLAGS)
+        client_proc = subprocess.Popen(client_cmd, close_fds=True, **h.detach_kwargs())
     except OSError as err:
         # Don't leave a server running with no client to use it.
         server_proc.kill()

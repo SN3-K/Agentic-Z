@@ -112,3 +112,11 @@ def test_unknown_argument_exits_2_without_status(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         hub_status.main(["--bogus"])
     assert exc.value.code == 2
+
+
+def test_diag_running_on_linux_reads_the_process_list(monkeypatch):
+    monkeypatch.setattr(hub_status, "IS_WINDOWS", False)
+    monkeypatch.setattr(hub_status, "posix_processes", lambda image: [(9, r"Z:\DayZ\DayZDiag_x64.exe")])
+    assert hub_status._diag_running()
+    monkeypatch.setattr(hub_status, "posix_processes", lambda image: None)
+    assert not hub_status._diag_running()

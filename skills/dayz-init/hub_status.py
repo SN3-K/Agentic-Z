@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
-from skill_helpers import p_root, strip_cpp_comments  # noqa: E402
+from skill_helpers import IS_WINDOWS, p_root, posix_processes, strip_cpp_comments  # noqa: E402
 from state import PROJECT_DIR, active_mod  # noqa: E402
 
 SEARCH_INDEX = Path.home() / ".claude" / "dayz-search-index" / "lancedb"
@@ -94,6 +94,8 @@ def _voyage_key_set(env_file: Path) -> bool:
 
 
 def _diag_running() -> bool:
+    if not IS_WINDOWS:
+        return bool(posix_processes("DayZDiag_x64.exe"))
     try:
         out = subprocess.check_output(
             ["tasklist", "/FI", "IMAGENAME eq DayZDiag_x64.exe"], text=True, stderr=subprocess.DEVNULL

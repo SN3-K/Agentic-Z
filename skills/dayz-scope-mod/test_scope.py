@@ -25,6 +25,7 @@ def scope(tmp_path, monkeypatch):
         mod, "SCOPE_STATE", tmp_path / ".claude" / "local-memory" / "dayz-active-scope.json"
     )
     monkeypatch.setattr(mod, "_game_workshop_dir", lambda: None)
+    monkeypatch.setattr(mod, "P_RULE_ROOT", "//p")  # the Windows form; the Linux one is tested below
     for name in ("ModA", "ModB", "ModC", ".hidden"):
         _make_mod(tmp_path / "workspace" / name)
     return mod
@@ -124,7 +125,6 @@ def test_sibling_with_metacharacter_is_refused(scope, tmp_path, capsys):
     assert not scope.SETTINGS_LOCAL.exists()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_real_workshop_folder_is_denied_in_posix_form(scope, monkeypatch):
     workshop = Path(r"C:\Program Files (x86)\Steam\steamapps\common\DayZ\!Workshop")
     monkeypatch.setattr(scope, "_game_workshop_dir", lambda: workshop)
@@ -137,9 +137,20 @@ def test_real_workshop_folder_is_denied_in_posix_form(scope, monkeypatch):
     assert _deny(scope) == []
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_posix_rule_path(scope):
     assert scope._posix_rule_path(Path(r"D:\Games\DayZ\!Workshop")) == "//d/Games/DayZ/!Workshop"
+    assert scope._posix_rule_path("/home/me/.local/share/Steam/steamapps/common/DayZ/!Workshop") == (
+        "//home/me/.local/share/Steam/steamapps/common/DayZ/!Workshop")
+
+
+def test_linux_p_folder_rules_use_its_absolute_path(scope, monkeypatch):
+    monkeypatch.setattr(scope, "P_RULE_ROOT", scope._posix_rule_path("/home/me/dayz-p"))
+    monkeypatch.setattr(scope, "_game_workshop_dir", lambda: Path("/home/me/Steam/steamapps/common/DayZ/!Workshop"))
+    assert scope.main(["ModA"]) == 0
+    deny = _deny(scope)
+    assert "Edit(//home/me/dayz-p/ModB/**)" in deny
+    assert "Edit(//home/me/dayz-p/Mods/@ModB/**)" in deny
+    assert "Edit(//home/me/Steam/steamapps/common/DayZ/!Workshop/@ModB/**)" in deny
 
 
 @pytest.mark.parametrize("name", ["Mod!Fix", "Mod#2"])

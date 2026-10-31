@@ -340,10 +340,10 @@ def launch_pair(
     # command pastes as is even with spaces in a path.
     print(f"[Launch] Server: {subprocess.list2cmdline(server_cmd)}")
     sys.stdout.flush()
-    # Detached (shared DETACH_FLAGS) so closing the agent's shell does not take
+    # Detached (shared h.detach_kwargs) so closing the agent's shell does not take
     # the pass-2 server and client down with it.
     try:
-        server_proc = subprocess.Popen(server_cmd, cwd=str(game_dir), creationflags=h.DETACH_FLAGS)
+        server_proc = subprocess.Popen(server_cmd, cwd=str(game_dir), **h.detach_kwargs())
     except OSError as err:
         sys.exit(f"{FAIL} Failed to spawn DayZDiag_x64.exe: {err}")
     print(f"{OK} Server PID: {server_proc.pid}")
@@ -357,7 +357,7 @@ def launch_pair(
         print(f"[Launch] Client: {subprocess.list2cmdline(client_cmd)}")
         sys.stdout.flush()
         try:
-            client_proc = subprocess.Popen(client_cmd, cwd=str(game_dir), creationflags=h.DETACH_FLAGS)
+            client_proc = subprocess.Popen(client_cmd, cwd=str(game_dir), **h.detach_kwargs())
         except OSError as err:
             stop_session([server_proc])
             sys.exit(f"{FAIL} Failed to spawn DayZDiag_x64.exe: {err}")

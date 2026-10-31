@@ -56,6 +56,7 @@ BUILD_PY = SKILLS_DIR / "dayz-build-pbo" / "build.py"
 DEPLOY_PY = SKILLS_DIR / "dayz-deploy-pbo" / "deploy.py"
 LAUNCH_PY = SKILLS_DIR / "dayz-launch-test" / "launch.py"
 STOP_BAT = SKILLS_DIR / "dayz-stop-test" / "stop_test.bat"
+STOP_PY = SKILLS_DIR / "dayz-stop-test" / "stop_test.py"  # the Linux /dayz-stop-test
 DIAG_EXE = "DayZDiag_x64.exe"
 
 DEFAULT_TIMEOUT_S = 300  # dayz-ingame-tester gives the client five minutes
@@ -168,7 +169,21 @@ def confirm_at_terminal(pids: list[int]) -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
+def stop_cmd() -> list[str]:
+    """The /dayz-stop-test command: stop_test.bat on Windows, stop_test.py on Linux."""
+    return ["cmd", "/c", str(STOP_BAT)] if h.IS_WINDOWS else [sys.executable, str(STOP_PY)]
+
+
 def real_runtime() -> Runtime:
+    if not h.IS_WINDOWS:  # DayZDiag runs under Proton; /proc names it by its Windows path
+        def diag_pids() -> list[int]:
+            return [pid for pid, _ in h.posix_processes(DIAG_EXE) or []]
+
+        def pid_alive(pid: int) -> bool:
+            return pid in diag_pids()
+
+        return Runtime(run=run_captured, diag_pids=diag_pids, pid_alive=pid_alive)
+
     def diag_pids() -> list[int]:
         _, out = run_captured(["tasklist", "/FI", f"IMAGENAME eq {DIAG_EXE}", "/FO", "CSV", "/NH"])
         return parse_tasklist(out)
@@ -196,7 +211,7 @@ def stop_session(rt: Runtime, started_by_gate: bool = False) -> dict:
             f"{DIAG_EXE} is already running (PIDs {pids}) and the gate did not start it. "
             "Close it yourself, or rerun with --yes to let the gate stop it."
         )
-    rc, out = rt.run(["cmd", "/c", str(STOP_BAT)])
+    rc, out = rt.run(stop_cmd())
     if rc != 0:
         raise GateError(f"/dayz-stop-test exited {rc}: {out.strip()}")
     # taskkill /F returns before Windows has torn the processes down; a DayZ server

@@ -20,6 +20,14 @@ Follow `skills/_shared/dayz-conventions.md`. This skill is the abort-only except
 
 No arguments. Runs `taskkill /IM DayZDiag_x64.exe /F`. A thin `.bat` is enough because the whole job is one `taskkill` call.
 
+On Linux, where DayZ Diag runs under Proton, run the Python script instead:
+
+```bash
+python "<skill-dir>/stop_test.py"
+```
+
+It finds every process whose program name in `/proc/<pid>/cmdline` is `DayZDiag_x64.exe` (Wine shows it as the Windows path, in any case) and sends it `SIGKILL`, the same as `taskkill /F`. It prints the same lines and uses the same exit codes as the `.bat`: 0 when processes were killed or none were running, 2 for an argument, and 1 when a kill was refused or `/proc` could not be read. `/dayz-gate` and the `/dayz-init` hub pick the right script for the OS; on Windows `stop_test.py` hands off to `stop_test.bat`.
+
 ## Exit codes
 
 | taskkill result | Output | Exit |

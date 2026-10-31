@@ -313,7 +313,7 @@ class _SessionRuntime:
 
     def run(self, cmd):
         joined = " ".join(cmd)
-        if "stop_test.bat" in joined:
+        if "stop_test." in joined:
             self.calls.append("stop")
             self.running = []
             return 0, "SUCCESS"

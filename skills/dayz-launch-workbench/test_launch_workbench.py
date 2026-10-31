@@ -104,7 +104,7 @@ def test_launch_uses_shared_detach_flags_and_workbench_cwd(tmp_path, monkeypatch
     monkeypatch.setattr("sys.argv", ["launch.py"])
     assert wb.main() == 0
     assert spawned["cmd"] == [str(exe)]
-    assert spawned["creationflags"] == wb.h.DETACH_FLAGS
+    assert wb.h.detach_kwargs().items() <= spawned.items()
     assert spawned["cwd"] == str(exe.parent)
 
 

@@ -300,7 +300,7 @@ def test_link_fix_outside_workspace_points_at_import_not_add_scaffold(mod, tmp_p
     [fix] = [f["triage"]["fix"] for f in data["findings"] if f["rule"] == "p-link"]
     assert "/dayz-add-scaffold" not in fix
     assert f'/dayz-import-mod --source "{outside}"' in fix
-    assert f'mklink /J "{p_drive / "MyMod"}" "{outside}"' in fix
+    assert lint.h.link_cmd(p_drive / "MyMod", outside) in fix
 
 
 def test_link_fix_for_workspace_mod_via_mod_dir_keeps_add_scaffold(mod, p_drive, monkeypatch, capsys):
@@ -352,10 +352,10 @@ def test_link_pointing_elsewhere_is_an_error(mod, p_drive, monkeypatch, tmp_path
 
 
 def _junction(link: Path, target: Path) -> None:
-    subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+    """A real junction (mklink /J), or a symlink on Linux."""
+    lint.h.make_dir_link(target, link, junction=True)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_imported_mod_linted_by_mod_dir_through_real_junctions_passes(mod, tmp_path, p_drive, monkeypatch, capsys):
     # /dayz-import-mod layout: workspace\MyMod is a junction to the outside source, and
     # P:\MyMod is a junction to workspace\MyMod. --mod-dir resolves to the source folder.
@@ -375,7 +375,7 @@ def test_imported_mod_linted_by_mod_dir_through_real_junctions_passes(mod, tmp_p
     # A real link to some other folder is still an error.
     other = tmp_path / "other"
     other.mkdir()
-    (p_drive / "MyMod").rmdir()  # removes the junction only, never its target
+    lint.h.remove_dir_link(p_drive / "MyMod")  # removes the junction only, never its target
     _junction(p_drive / "MyMod", other)
     assert lint.main(["--mod-dir", str(workspace / "MyMod")]) == 1
     assert "points at" in capsys.readouterr().out

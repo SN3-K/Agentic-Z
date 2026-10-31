@@ -352,7 +352,7 @@
     "id": "p-mods-junction",
     "pattern": "P:\\\\Mods\\\\? (?:does not exist|is a regular folder|junction is dangling)",
     "meaning": "P:\\Mods\\ is not a junction to the DayZ !Workshop folder, so built PBOs would not land where the engine loads them.",
-    "fix": "Recreate the junction: cmd /c mklink /J P:\\Mods \"<DayZ install>\\!Workshop\" (remove a regular P:\\Mods folder first).",
+    "fix": "Recreate the junction: cmd /c mklink /J P:\\Mods \"<DayZ install>\\!Workshop\" (remove a regular P:\\Mods folder first). On Linux it is a symlink: ln -s \"<DayZ install>/!Workshop\" <P folder>/Mods.",
     "owner_agent": "user",
     "source": "docs/dayz-modding.md Troubleshooting"
   },
@@ -360,7 +360,7 @@
     "id": "deploy-dir-not-owned",
     "pattern": "no Agentic-Z ownership marker",
     "meaning": "P:\\Mods\\@<ModName>\\ exists but was not created by this pipeline; it could be a subscribed or hand-placed mod.",
-    "fix": "If the folder is yours, remove it (cmd /c rmdir /s /q P:\\Mods\\@<ModName>) and gate again; otherwise rename the mod.",
+    "fix": "If the folder is yours, remove it (cmd /c rmdir /s /q P:\\Mods\\@<ModName>, or rm -rf <P folder>/Mods/@<ModName> on Linux) and gate again; otherwise rename the mod.",
     "owner_agent": "user",
     "source": "dayz-build-pbo SKILL.md (ownership gate)"
   },

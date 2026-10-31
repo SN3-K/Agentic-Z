@@ -19,7 +19,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -373,9 +372,11 @@ def check_instance(instance: str) -> str:
 
 
 def make_junction(link: Path, target: Path) -> None:
-    result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
-    if result.returncode != 0:
-        raise BehaviorError(f"could not create junction {link}: {(result.stderr or result.stdout).strip()}")
+    """A junction on Windows (mklink /J), a symlink on Linux."""
+    try:
+        h.make_dir_link(target, link, junction=True)
+    except OSError as exc:
+        raise BehaviorError(f"could not create junction {link}: {exc}") from exc
 
 
 # Server profile files that are logs or dumps, not settings: the gate reads the

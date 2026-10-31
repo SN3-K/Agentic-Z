@@ -218,7 +218,7 @@ def test_launch_uses_shared_detach_flags(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.argv", ["launch.py"])
     assert ob.main() == 0
     assert spawned["cmd"] == [str(exe)]
-    assert spawned["creationflags"] == ob.h.DETACH_FLAGS
+    assert ob.h.detach_kwargs().items() <= spawned.items()
     assert spawned["cwd"] == str(exe.parent)
 
 

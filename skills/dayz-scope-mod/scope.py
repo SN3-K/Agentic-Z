@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import ntpath
 import os
 import shutil
 import sys
@@ -52,10 +53,11 @@ WARN = "[WARN] "
 #   directory (the project root).
 # - "//path" is absolute. Windows paths are normalized to POSIX form before
 #   matching (P:\Foo becomes /p/Foo), so P:\Foo\** is written //p/Foo/**.
+#   On Linux P: is a folder, so {p} is that folder's absolute form (P_RULE_ROOT).
 DENY_TEMPLATES = (
     "Edit(/workspace/{name}/**)",
-    "Edit(//p/{name}/**)",
-    "Edit(//p/Mods/@{name}/**)",
+    "Edit({p}/{name}/**)",
+    "Edit({p}/Mods/@{name}/**)",
 )
 
 # Rule paths use gitignore syntax. * ? [ are wildcards anywhere in a name.
@@ -72,9 +74,19 @@ def _has_meta(name: str) -> bool:
 
 
 def _posix_rule_path(path: Path) -> str:
-    """C:\\Games\\DayZ -> //c/Games/DayZ (the absolute form Claude Code matches)."""
-    drive, rest = os.path.splitdrive(str(path))
+    """C:\\Games\\DayZ -> //c/Games/DayZ, /home/me/DayZ -> //home/me/DayZ.
+
+    The absolute form Claude Code matches. The drive letter is read from the
+    text itself (ntpath), so a Windows path converts the same on any OS.
+    """
+    drive, rest = ntpath.splitdrive(str(path))
+    if not drive:
+        return "/" + str(path).replace("\\", "/")  # a POSIX absolute path: "/" + "/home/..." is "//home/..."
     return "//" + drive.rstrip(":").lower() + rest.replace("\\", "/")
+
+
+# The P: work drive in rule form: //p on Windows, the P folder on Linux.
+P_RULE_ROOT = "//p" if h.IS_WINDOWS else _posix_rule_path(h.p_root())
 
 
 def _game_workshop_dir() -> Optional[Path]:
@@ -368,7 +380,7 @@ def cmd_scope(mod_name: str) -> int:
     new_rules: list[str] = []
     for other in siblings:
         for tmpl in DENY_TEMPLATES:
-            new_rules.append(tmpl.format(name=other))
+            new_rules.append(tmpl.format(name=other, p=P_RULE_ROOT))
         if workshop is not None:
             new_rules.append(f"Edit({_posix_rule_path(workshop)}/@{other}/**)")
 

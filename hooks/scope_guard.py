@@ -15,7 +15,10 @@ edit gives one, is a mod again. The guarded places are:
 
   - <project>/workspace/<Other>/...   any folder other than the active mod, as above
   - P:\\<Other>\\... and P:\\Mods\\@<Other>\\...   when <Other> is a mod in workspace/
-    (a folder there with config.cpp or $PBOPREFIX$ at its root)
+    (a folder there with config.cpp or $PBOPREFIX$ at its root). On Linux P:
+    is a folder (skills/_shared/platform_env.py p_root: $DAYZ_P_ROOT, or the
+    p: drive of the DayZ Tools Proton prefix), and <that folder>/<Other>/...
+    and <that folder>/Mods/@<Other>/... are guarded the same way
   - <DayZ game>\\!Workshop\\@<Other>\\...   the real folder behind the P:\\Mods
     junction, when <Other> is a mod in workspace/. The game folder is found
     the way scope.py finds it (/dayz-preflight's find_dayz_game:
@@ -58,6 +61,7 @@ Output format: https://code.claude.com/docs/en/hooks#pretooluse-decision-control
 """
 from __future__ import annotations
 
+import functools
 import importlib.util
 import json
 import os
@@ -69,6 +73,7 @@ from typing import Iterator, Optional
 
 SCOPE_STATE = Path(".claude") / "local-memory" / "dayz-active-scope.json"
 PREFLIGHT = Path(__file__).resolve().parents[1] / "skills" / "dayz-preflight" / "preflight.py"
+PLATFORM_ENV = Path(__file__).resolve().parents[1] / "skills" / "_shared" / "platform_env.py"
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
 
@@ -123,6 +128,17 @@ def game_workshop_dir() -> Optional[Path]:
     return game / "!Workshop" if game is not None else None
 
 
+@functools.lru_cache(maxsize=None)
+def linux_p_root() -> Optional[Path]:
+    """The P: work drive folder on Linux (platform_env.p_root), or None on Windows or without platform_env."""
+    if sys.platform == "win32" or not PLATFORM_ENV.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("scope_guard_platform_env", PLATFORM_ENV)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.p_root()
+
+
 def _deployed_mod(parts: list[str], low: list[str], root: list[str], known: set[str]) -> Optional[str]:
     """The mod of a path at or inside <root>/@<mod>/, when <mod> is a workspace mod."""
     n = len(root)
@@ -166,6 +182,16 @@ def target_mod(file_path: str, project: Path, mods: list[str]) -> Optional[str]:
             return deployed
         if len(low) > 1 and low[1] in known:
             return parts[1]
+    p_root = linux_p_root()
+    if p_root is not None:
+        root = _norm(str(p_root))
+        n = len(root)
+        if len(low) > n and low[:n] == root:
+            deployed = _deployed_mod(parts, low, root + ["mods"], known)
+            if deployed:
+                return deployed
+            if low[n] in known:
+                return parts[n]
     if "!workshop" in low:  # look the game up only for a path that could be inside it
         workshop = game_workshop_dir()
         if workshop is not None:

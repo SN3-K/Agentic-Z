@@ -18,7 +18,6 @@ import argparse
 import os
 import re
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -456,14 +455,11 @@ def ensure_template_junction(junction: Path, mission_dir: Path) -> None:
             "       Move it out of the instance folder and rerun."
         )
 
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(junction), str(mission_dir)],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
+    try:
+        h.make_dir_link(mission_dir, junction, junction=True)  # a symlink on Linux
+    except OSError as exc:
         sys.exit(
-            f"{FAIL} Could not create template junction {junction}: "
-            f"{(result.stderr or result.stdout).strip()}\n"
+            f"{FAIL} Could not create template junction {junction}: {exc}\n"
             "       Without it the client connects but never spawns. Fix the cause and rerun."
         )
     print(f"{OK} Junction {junction.name}/ -> mission/ (template handshake)")
@@ -488,15 +484,8 @@ def remove_old_template_junctions(inst_dir: Path, template: str, mission_dir: Pa
 
 
 def remove_link(path: Path) -> None:
-    """Remove a junction or directory symlink without touching its target.
-
-    On Windows, rmdir on a reparse point deletes only the link, even when it
-    dangles or its target is not empty.
-    """
-    if os.name == "nt":
-        os.rmdir(path)
-    else:
-        os.unlink(path)
+    """Remove a junction or directory symlink without touching its target (h.remove_dir_link)."""
+    h.remove_dir_link(path)
 
 
 def default_server_cfg(instance: str, template: str) -> str:

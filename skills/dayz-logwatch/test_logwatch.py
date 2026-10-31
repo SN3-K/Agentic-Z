@@ -408,7 +408,6 @@ def test_client_running_reports_unknown_when_the_query_fails(monkeypatch):
     assert logwatch.client_running() is None
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="the process query is Windows only")
 def test_diag_command_lines_reads_real_command_lines_without_starting_a_process(monkeypatch):
     """It used to start PowerShell (about 1.5 s cold start) on every 5-second check."""
     marker = "zzlogwatch-cmdline-marker"

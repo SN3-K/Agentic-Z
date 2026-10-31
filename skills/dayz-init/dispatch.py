@@ -122,6 +122,8 @@ def command_for(
     if action == "health":
         return _py("dayz-health", "health.py", _need(mod, "--mod", action))
     if action == "stop":
+        if sys.platform != "win32":
+            return _py("dayz-stop-test", "stop_test.py")
         return ["cmd", "/c", str(SKILLS_DIR / "dayz-stop-test" / "stop_test.bat")]
     if action == "workbench":
         return _py("dayz-launch-workbench", "launch.py", "--mod", _need(mod, "--mod", action))

@@ -236,8 +236,12 @@ def diag_command_lines(exe: str = DIAG_EXE) -> Optional[list[str]]:
     about 1.5 s of cold start on every check. tasklist cannot show command
     lines, and wmic is gone from current Windows 11. A process whose command
     line Windows will not show (access denied, it exited meanwhile) is listed
-    as "". None off Windows or when the snapshot fails.
+    as "". None when the snapshot fails. On Linux the command lines come from
+    /proc (h.posix_processes), where Wine shows DayZDiag's own arguments.
     """
+    if not h.IS_WINDOWS:
+        found = h.posix_processes(exe)
+        return None if found is None else [line for _, line in found]
     try:
         import ctypes
         from ctypes import wintypes

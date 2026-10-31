@@ -15,6 +15,8 @@ clean = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(clean)
 h = clean.h
 _real_running_blockers = clean.running_blockers
+# The by-hand delete command in the hints: cmd /c rmdir /s /q on Windows, rm -rf on Linux.
+RMTREE = h.rmtree_cmd("x").rsplit(" ", 1)[0]
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +96,7 @@ def test_discover_mods_skips_unmanaged_and_warns_on_mod_folders(tmp_path, juncti
     mods, warnings = clean.discover_mods(ws, None)
     assert [p.name for p in mods] == ["A", "B"]
     assert len(warnings) == 1
-    assert "workspace\\HandPlaced" in warnings[0] and "rmdir /s /q" in warnings[0]
+    assert "workspace\\HandPlaced" in warnings[0] and RMTREE in warnings[0]
 
 
 def test_payload_bundle_with_matching_marker_is_managed(p_drive, tmp_path):
@@ -131,7 +133,7 @@ def test_discover_mods_target_not_managed_explains_and_hints(tmp_path):
         clean.discover_mods(tmp_path / "workspace", "HandPlaced")
     msg = str(exc.value.code)
     assert "no proof" in msg and "imported mod link" in msg and "ownership marker" in msg
-    assert "rmdir /s /q" in msg
+    assert RMTREE in msg
 
 
 def test_discover_mods_target_missing_says_not_found(tmp_path):
@@ -225,10 +227,10 @@ def test_junction_pointing_elsewhere_is_left_alone(p_drive, tmp_path, monkeypatc
 
 
 def _mklink_j(link: Path, target: Path) -> None:
-    subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+    """A real junction (mklink /J), or a symlink on Linux."""
+    h.make_dir_link(target, link, junction=True)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="directory junctions are a Windows feature")
 @pytest.mark.parametrize("argv", [(), ("--mod", "Imported")], ids=["sweep", "mod"])
 def test_broken_imported_link_is_cleaned_with_its_junction_and_deploy_dir(project, p_drive, monkeypatch, argv):
     """An imported mod whose external source was deleted: the link, P:\\<Name> and the deploy dir all go."""
@@ -275,12 +277,25 @@ def test_imported_link_is_planned_as_workspace_link(p_drive, tmp_path, monkeypat
 # --- remove_artifact never recurses into links -------------------------------
 
 def test_remove_artifact_uses_rmdir_for_links(monkeypatch, tmp_path):
+    monkeypatch.setattr(h, "IS_WINDOWS", True)
     calls = []
     monkeypatch.setattr(clean.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
     monkeypatch.setattr(clean.shutil, "rmtree", lambda p: pytest.fail("rmtree must not run on a link"))
     clean.remove_artifact("workspace-link", tmp_path / "Imported")
     clean.remove_artifact("junction", tmp_path / "P" / "MyMod")
     assert [c[:3] for c in calls] == [["cmd", "/c", "rmdir"]] * 2
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the symlink branch; Windows uses cmd /c rmdir (above)")
+def test_remove_artifact_unlinks_symlinks_and_keeps_their_targets(monkeypatch, tmp_path):
+    monkeypatch.setattr(clean.shutil, "rmtree", lambda p: pytest.fail("rmtree must not run on a link"))
+    source = tmp_path / "source"
+    (source / "Scripts").mkdir(parents=True)
+    for link in (tmp_path / "Imported", tmp_path / "Dangling"):
+        link.symlink_to(source if link.name == "Imported" else tmp_path / "gone", target_is_directory=True)
+        clean.remove_artifact("workspace-link", link)
+        assert not os.path.lexists(link)
+    assert (source / "Scripts").is_dir()
 
 
 def test_remove_artifact_empties_then_removes_workspace(tmp_path):
@@ -439,6 +454,8 @@ def test_main_include_server_does_not_list_health_twice(project, monkeypatch, ca
 
 def _fake_link_removal(monkeypatch, junctions):
     """cmd /c rmdir on a faked P:\\<Name> junction: forget the fake link instead."""
+    monkeypatch.setattr(h, "IS_WINDOWS", True)  # the fake answers the Windows cmd /c rmdir call
+
     def run(cmd, **kw):
         assert cmd[:3] == ["cmd", "/c", "rmdir"]
         junctions.pop(Path(cmd[3]), None)
@@ -513,6 +530,7 @@ def test_dry_run_warns_while_dayz_or_workbench_runs(project, monkeypatch, capsys
 
 
 def test_running_blockers_reads_tasklist(monkeypatch):
+    monkeypatch.setattr(h, "IS_WINDOWS", True)
     queries = []
 
     class _Done:
@@ -528,3 +546,10 @@ def test_running_blockers_reads_tasklist(monkeypatch):
     monkeypatch.setattr(clean.subprocess, "run", tasklist)
     assert _real_running_blockers() == ["DayZDiag_x64.exe"]
     assert [q[:2] for q in queries] == [["tasklist", "/FI"]] * 2
+
+
+def test_running_blockers_on_linux_reads_the_process_list(monkeypatch):
+    monkeypatch.setattr(h, "IS_WINDOWS", False)
+    running = {"DayZDiag_x64.exe": [(42, r"Z:\\games\\DayZ\\DayZDiag_x64.exe -server")]}
+    monkeypatch.setattr(h, "posix_processes", lambda exe: running.get(exe, []))
+    assert _real_running_blockers() == ["DayZDiag_x64.exe"]

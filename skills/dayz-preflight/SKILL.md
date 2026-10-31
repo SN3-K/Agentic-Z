@@ -10,7 +10,7 @@ description: "Checks the DayZ modding environment (P:\\ mounted, DayZ Tools, Day
 
 Verify the DayZ modding environment before doing any DayZ work. Halts with a clear error if `P:\` is not mounted; warns on the other checks so the user can decide whether to proceed. Follow `skills/_shared/dayz-conventions.md`.
 
-Preflight reports and does not repair, with one exception: when `P:\Mods\` is absent and the game's `!Workshop\` folder is found, it creates the `P:\Mods\` junction. `mklink /J` needs no admin rights, overwrites nothing and has a fixed target. It never mounts `P:\` (use `/dayz-workdrive`) and never changes an existing `P:\Mods\`.
+Preflight reports and does not repair, with one exception: when `P:\Mods\` is absent and the game's `!Workshop\` folder is found, it creates the `P:\Mods\` junction. `mklink /J` needs no admin rights, overwrites nothing and has a fixed target. On Linux the junction is a symlink (`ln -s`), and the fix commands it prints are `ln -s`, `rm` and `rmdir` instead of `mklink` and `cmd /c rmdir`. It never mounts `P:\` (use `/dayz-workdrive`) and never changes an existing `P:\Mods\`.
 
 ## How to run
 

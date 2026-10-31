@@ -102,7 +102,7 @@ def verify_junction(modname: str, workspace_target: Path) -> Path:
     if not h.paths_equal(target, workspace_target):
         sys.exit(
             f"{FAIL} {p_drive_link} points at {target}, expected {workspace_target}\n"
-            f"       Remove the wrong link (cmd /c rmdir \"{p_drive_link}\"), then run\n"
+            f"       Remove the wrong link ({h.unlink_cmd(p_drive_link)}), then run\n"
             f"       /dayz-add-scaffold {modname} --piece junction."
         )
     print(f"{OK} {p_drive_link} junction valid")

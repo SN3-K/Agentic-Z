@@ -347,7 +347,7 @@ class FakeSession:
     def run(self, cmd: list[str]) -> tuple[int, str]:
         self.calls.append(cmd)
         joined = " ".join(cmd)
-        if "stop_test.bat" in joined:
+        if "stop_test." in joined:
             self.running = []
             return 0, "SUCCESS"
         assert "launch.py" in joined, cmd
@@ -692,4 +692,4 @@ def test_full_run_with_yes_stops_a_session_it_did_not_start(project, capsys):
     fake.running = [42]
     rc, first, data = run_main(["visual", "MyMod", "--json", "--yes"], capsys, fake.runtime())
     assert (rc, first) == (0, "PASS"), data["failures"]
-    assert "stop_test.bat" in " ".join(fake.calls[0])
+    assert "stop_test." in " ".join(fake.calls[0])
