@@ -35,7 +35,7 @@ Read-only. Prints `OK`, or one line per issue (always exits 0):
   python "<skill-dir>\dispatch.py" mount-p
   ```
   If the mount fails, show its output and stop.
-- `HARD <name> ...`: DayZ Tools missing, vanilla data not extracted, `P:\Mods` the wrong shape (or missing with no DayZ install found), or Python too old. Tell the user what is wrong and the fix or link on the line, then stop. They re-run `/dayz-init` after fixing it.
+- `HARD <name> ...`: DayZ Tools missing, vanilla data not extracted, `P:\Mods` the wrong shape (or missing with no DayZ install found), Python too old, or (`HARD host`, Linux) a work drive folder on a filesystem that cannot hold the mod's symlink. Tell the user what is wrong and the fix or link on the line, then stop. They re-run `/dayz-init` after fixing it.
 
 A missing `P:\Mods` is not an issue when the DayZ install's `!Workshop` folder exists: `/dayz-preflight`, which the first child skill in Step 5 runs, creates the junction.
 

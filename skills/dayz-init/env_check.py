@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
+import platform_env  # noqa: E402
 from skill_helpers import IS_WINDOWS, p_root, p_root_hint, preflight  # noqa: E402
 
 P_MODS = p_root() / "Mods"
@@ -122,7 +123,21 @@ def check_mods_junction() -> EnvIssue | None:
     return EnvIssue(name="mods_junction", severity=Severity.HARD_STOP, message=problem)
 
 
-CHECKS = [check_python, check_p_drive, check_dayz_tools, check_vanilla_data, check_mods_junction]
+def check_host() -> EnvIssue | None:
+    """Linux: a host problem that stops the next step (the mod's P: symlink), such as a P folder on FAT.
+
+    Read-only (platform_env.host_issues without the symlink probe); the warnings
+    are /dayz-preflight's to show.
+    """
+    if IS_WINDOWS or not p_drive_mounted():
+        return None
+    failed = [i for i in platform_env.host_issues(p_root()) if i.level == "fail"]
+    if not failed:
+        return None
+    return EnvIssue(name="host", severity=Severity.HARD_STOP, message=" ".join(i.message for i in failed))
+
+
+CHECKS = [check_python, check_p_drive, check_host, check_dayz_tools, check_vanilla_data, check_mods_junction]
 
 
 def run_all() -> list[EnvIssue]:

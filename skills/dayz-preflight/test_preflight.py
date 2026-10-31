@@ -518,3 +518,12 @@ def test_absent_mods_with_game_but_no_workshop_names_the_folder(
     assert "DAYZ_GAME_PATH" not in err
     assert "mklink" not in err
     assert created == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks resolve in paths_equal only off Windows")
+def test_paths_equal_resolves_symlinked_spellings(tmp_path):
+    real = tmp_path / "var" / "home" / "me"
+    real.mkdir(parents=True)
+    (tmp_path / "home").symlink_to(tmp_path / "var" / "home", target_is_directory=True)
+    assert preflight.paths_equal(tmp_path / "home" / "me", real)
+    assert not preflight.paths_equal(tmp_path / "home", real)

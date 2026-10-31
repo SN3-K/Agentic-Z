@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import env_check  # noqa: E402
 from env_check import EnvIssue, Severity, classify  # noqa: E402
@@ -11,6 +13,7 @@ def _env(monkeypatch, mounted=True, tools=True, vanilla=True, p_mods_problem=Non
          game=None, windows=True):
     """game: a folder standing in for the DayZ install, or None when it isn't found."""
     monkeypatch.setattr(env_check, "IS_WINDOWS", windows)
+    monkeypatch.setattr(env_check.platform_env, "host_issues", lambda *a, **k: [])
     monkeypatch.setattr(env_check, "p_drive_mounted", lambda: mounted)
     pf = env_check.preflight
     monkeypatch.setattr(pf, "find_dayz_tools", lambda: Path("C:/Tools") if tools else None)
@@ -112,3 +115,19 @@ def test_classify_preserves_order():
     autofix, hard = classify(issues)
     assert [i.name for i in autofix] == ["a", "c"]
     assert [i.name for i in hard] == ["b"]
+
+
+def test_host_failure_on_linux_is_a_hard_stop(monkeypatch):
+    _env(monkeypatch, windows=False)
+    issues = [env_check.platform_env.HostIssue("warn", "p_fs", "on NTFS"),
+              env_check.platform_env.HostIssue("fail", "p_fs", "/x is on vfat, which cannot hold symlinks")]
+    monkeypatch.setattr(env_check.platform_env, "host_issues", lambda *a, **k: issues)
+    [issue] = env_check.run_all()
+    assert (issue.name, issue.severity) == ("host", Severity.HARD_STOP)
+    assert "vfat" in issue.message and "NTFS" not in issue.message
+
+
+def test_host_check_never_runs_on_windows(monkeypatch):
+    _env(monkeypatch, windows=True)
+    monkeypatch.setattr(env_check.platform_env, "host_issues", lambda *a, **k: pytest.fail("Linux only"))
+    assert env_check.run_all() == []

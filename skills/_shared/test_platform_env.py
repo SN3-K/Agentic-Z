@@ -17,6 +17,7 @@ def steam(monkeypatch, tmp_path):
     """A fake home with a native Steam install; returns its root."""
     monkeypatch.setattr(pe.Path, "home", lambda: tmp_path)
     monkeypatch.delenv("DAYZ_P_ROOT", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)  # else a real XDG Steam leaks into the fake home
     root = tmp_path / ".local" / "share" / "Steam"
     (root / "steamapps").mkdir(parents=True)
     return root
@@ -216,3 +217,185 @@ def test_kill_posix_processes_skips_processes_that_already_exited(monkeypatch):
 def test_detach_kwargs():
     kwargs = pe.detach_kwargs()
     assert kwargs == ({"creationflags": pe.DETACH_FLAGS} if sys.platform == "win32" else {"start_new_session": True})
+
+
+# ------------------------------------------------------------ host checks
+
+@linux_only
+def test_steam_installs_cover_xdg_debian_and_snap_once_each(steam, monkeypatch, tmp_path):
+    xdg = tmp_path / "xdg"
+    (xdg / "Steam").mkdir(parents=True)
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    (tmp_path / ".steam").mkdir()
+    (tmp_path / ".steam" / "steam").symlink_to(steam, target_is_directory=True)  # Steam's own link: not a second install
+    (tmp_path / ".steam" / "debian-installation").mkdir()
+    snap = tmp_path / "snap" / "steam" / "common" / ".local" / "share" / "Steam"
+    snap.mkdir(parents=True)
+    assert pe.steam_installs() == [
+        ("native", xdg / "Steam"), ("native", steam),
+        ("native", tmp_path / ".steam" / "debian-installation"), ("snap", snap),
+    ]
+
+
+MOUNTINFO = """\
+22 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw
+40 22 8:17 / /mnt/win rw,relatime shared:2 - ntfs3 /dev/sdb1 rw
+41 22 8:33 / /media/usb\\040stick rw shared:3 - vfat /dev/sdc1 rw
+42 22 0:50 / /home/me/fuse rw shared:4 - fuse.sshfs host: rw
+"""
+
+
+@pytest.mark.parametrize("path, kind", [
+    ("/home/me/dayz-p", "ext4"),
+    ("/mnt/win/SteamLibrary", "ntfs3"),
+    ("/mnt/window", "ext4"),  # a mount point name prefix is not a parent folder
+    ("/media/usb stick/P", "vfat"),
+    ("/home/me/fuse/x", "fuse.sshfs"),
+])
+@linux_only
+def test_fs_type_picks_the_longest_containing_mount(tmp_path, path, kind):
+    info = tmp_path / "mountinfo"
+    info.write_text(MOUNTINFO, encoding="utf-8")
+    assert pe.fs_type(path, info) == kind
+
+
+def test_fs_type_unknown_without_mountinfo(tmp_path):
+    assert pe.fs_type("/x", tmp_path / "missing") is None
+
+
+@linux_only
+def test_symlinks_work_probe_leaves_nothing_behind(tmp_path):
+    assert pe.symlinks_work(tmp_path) is True
+    assert list(tmp_path.iterdir()) == []
+    assert pe.symlinks_work(tmp_path / "missing") is None
+
+
+@linux_only
+@pytest.mark.parametrize("grants, writable", [
+    ([], False),
+    (["xdg-music:ro", "xdg-pictures:ro"], False),  # the Steam Flatpak's defaults
+    (["home"], True),
+    (["host"], True),
+    (["~/dayz-p"], True),
+    (["~/dayz-p:ro"], False),
+    (["~/dayz-p", "!~/dayz-p"], False),
+    (["~/dayz"], False),  # a sibling whose name is a prefix
+])
+def test_flatpak_can_write(monkeypatch, tmp_path, grants, writable):
+    monkeypatch.setattr(pe.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert pe.flatpak_can_write(tmp_path / "dayz-p", grants) is writable
+
+
+@linux_only
+def test_flatpak_grants_read_metadata_and_overrides(monkeypatch, tmp_path):
+    monkeypatch.setattr(pe.Path, "home", lambda: tmp_path)
+    flatpak = tmp_path / ".local" / "share" / "flatpak"
+    meta = flatpak / "app" / pe.FLATPAK_STEAM_ID / "current" / "active" / "metadata"
+    meta.parent.mkdir(parents=True)
+    meta.write_text("[Application]\nname=x\n\n[Context]\nfilesystems=xdg-music:ro;xdg-pictures:ro;\n", encoding="utf-8")
+    assert pe._flatpak_filesystems() == ["xdg-music:ro", "xdg-pictures:ro"]
+    (flatpak / "overrides").mkdir()
+    (flatpak / "overrides" / pe.FLATPAK_STEAM_ID).write_text("[Context]\nfilesystems=/data/dayz-p;\n", encoding="utf-8")
+    assert pe._flatpak_filesystems()[-1] == "/data/dayz-p"
+
+
+@linux_only
+def test_snap_can_write_only_visible_home_folders(monkeypatch, tmp_path):
+    monkeypatch.setattr(pe.Path, "home", lambda: tmp_path)
+    assert pe.snap_can_write(tmp_path / "dayz-p")
+    assert not pe.snap_can_write(tmp_path / ".dayz-p")
+    assert not pe.snap_can_write("/data/dayz-p")
+
+
+@pytest.fixture
+def host(monkeypatch, tmp_path):
+    """A clean Linux host: a P folder on ext4, one native Steam, no Tools prefix. Tests change one piece."""
+    p = tmp_path / "P"
+    p.mkdir()
+    state = {"fs": {}, "installs": [("native", tmp_path / "Steam")], "prefix": None}
+    monkeypatch.setattr(pe, "IS_WINDOWS", False)
+    monkeypatch.setattr(pe, "IS_LINUX", True)
+    monkeypatch.setattr(pe, "posix_processes", lambda image, proc=None: [])
+    monkeypatch.setattr(pe, "fs_type", lambda path, mountinfo=None: state["fs"].get(str(path), "ext4"))
+    monkeypatch.setattr(pe, "steam_installs", lambda: state["installs"])
+    monkeypatch.setattr(pe, "tools_prefix", lambda: state["prefix"])
+    monkeypatch.delenv("DAYZ_P_ROOT", raising=False)
+    return p, state
+
+
+def _levels(issues):
+    return {i.name: i.level for i in issues}
+
+
+@linux_only
+def test_host_clean(host):
+    p, _ = host
+    assert set(_levels(pe.host_issues(p, probe_symlinks=True)).values()) == {"ok"}
+
+
+@linux_only
+def test_host_flags_filesystems(host, tmp_path):
+    p, state = host
+    state["fs"][str(p)] = "vfat"
+    assert _levels(pe.host_issues(p))["p_fs"] == "fail"
+    state["fs"][str(p)] = "ntfs3"
+    game = tmp_path / "DayZ"
+    state["fs"][str(game)] = "fuseblk"
+    levels = _levels(pe.host_issues(p, game))
+    assert levels["p_fs"] == "warn" and levels["game_fs"] == "warn"
+
+
+@linux_only
+def test_host_flags_other_os_missing_steam_and_proc(host, monkeypatch):
+    p, state = host
+    monkeypatch.setattr(pe, "IS_LINUX", False)
+    state["installs"] = []
+    monkeypatch.setattr(pe, "posix_processes", lambda image, proc=None: None)
+    levels = _levels(pe.host_issues(p))
+    assert levels["os"] == levels["steam"] == levels["proc"] == "warn"
+
+
+@linux_only
+def test_host_flags_a_flatpak_steam_that_cannot_write_p(host, monkeypatch, tmp_path):
+    p, state = host
+    flatpak = tmp_path / "fp" / "Steam"
+    state["installs"] = [("flatpak", flatpak)]
+    state["prefix"] = flatpak / "steamapps" / "compatdata" / pe.DAYZ_TOOLS_APPID / "pfx"
+    (state["prefix"] / "dosdevices").mkdir(parents=True)
+    os.symlink(p, state["prefix"] / "dosdevices" / "p:")
+    os.symlink("/", state["prefix"] / "dosdevices" / "z:")
+    monkeypatch.setattr(pe, "_flatpak_filesystems", lambda: ["xdg-music:ro"])
+    [sandbox] = [i for i in pe.host_issues(p) if i.name == "sandbox"]
+    assert sandbox.level == "warn" and f"--filesystem={p}" in sandbox.message
+    monkeypatch.setattr(pe, "_flatpak_filesystems", lambda: [str(p)])
+    assert "sandbox" not in _levels(pe.host_issues(p))
+
+
+@linux_only
+def test_host_flags_prefix_drives(host, monkeypatch, tmp_path):
+    p, state = host
+    state["prefix"] = tmp_path / "pfx"
+    drives = state["prefix"] / "dosdevices"
+    drives.mkdir(parents=True)
+    os.symlink(tmp_path, drives / "z:")
+    levels = _levels(pe.host_issues(p))
+    assert levels["prefix_z"] == "warn" and levels["p_mapping"] == "warn"  # z: not /, and no p: at all
+    os.symlink(tmp_path / "elsewhere", drives / "p:")
+    monkeypatch.setenv("DAYZ_P_ROOT", str(p))
+    [mapping] = [i for i in pe.host_issues(p) if i.name == "p_mapping"]
+    assert "different folders" in mapping.message
+
+
+def test_host_issues_empty_on_windows(monkeypatch):
+    monkeypatch.setattr(pe, "IS_WINDOWS", True)
+    assert pe.host_issues() == []
+
+
+def test_loads_by_path_without_sys_modules():
+    """hooks/scope_guard.py loads this file by path and never registers it; that must work."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("platform_env_by_path", Path(pe.__file__))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.HostIssue("ok", "x", "y").level == "ok"

@@ -331,6 +331,18 @@ def check_p_drive() -> bool:
     return False
 
 
+def check_host() -> None:
+    """Linux only: the host checks from platform_env.host_issues(). Warn only.
+
+    Covers the OS, /proc, the Steam installs (native, Flatpak, Snap), the work
+    drive folder's filesystem and a symlink probe in it, whether a Flatpak or
+    Snap Steam can write it, a DayZ library on NTFS, and the DayZ Tools prefix's
+    z: and p: drives. The probe makes and removes one uniquely named symlink.
+    """
+    for issue in platform_env.host_issues(P_DRIVE, find_dayz_game(), probe_symlinks=True):
+        print(f"{OK if issue.level == 'ok' else WARN} Host: {issue.message}")
+
+
 def check_dayz_tools() -> None:
     """Look for AddonBuilder.exe via env / registry / Steam libraries. Warn only."""
     warn_if_override_ignored(
@@ -418,8 +430,15 @@ def _create_junction(link: Path, target: Path) -> None:
 
 
 def paths_equal(a: Path, b: Path) -> bool:
-    """True when two paths name the same location (case and separator insensitive)."""
-    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+    """True when two paths name the same location (case and separator insensitive).
+
+    On Linux symlinks are resolved too, so /home/me/x and /var/home/me/x (Fedora
+    Atomic and Bazzite link /home to /var/home) or a symlinked Steam library
+    compare equal. Not on Windows: there realpath maps a subst P:\\ back to its host folder.
+    """
+    if os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b))):
+        return True
+    return not platform_env.IS_WINDOWS and os.path.realpath(a) == os.path.realpath(b)
 
 
 def validate_p_mods() -> Optional[str]:
@@ -533,6 +552,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     "(creates the junction when P:\\Mods is missing). Takes no options.",
     ).parse_args(argv)
     print("DayZ preflight\n", flush=True)
+    check_host()
     if not check_p_drive():
         return 1
     check_dayz_tools()

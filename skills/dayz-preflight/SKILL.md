@@ -24,6 +24,7 @@ Run it before other DayZ skills, after a fresh clone, and after each reboot (`P:
 
 | # | Check | Severity |
 |---|---|---|
+| 0 | Linux only, printed as `Host:` lines: the OS is Linux; `/proc` is readable (stop-test, the gate and the status line find DayZDiag there); which Steam installs exist (native, Flatpak, Snap); the work drive folder's filesystem (FAT and exFAT cannot hold the symlinks, NTFS is unreliable under Proton) and a symlink made and removed in it; whether a Flatpak or Snap Steam that runs DayZ Tools can write the folder; a DayZ library on NTFS; and that the DayZ Tools prefix's `z:` points at `/` and its `p:` matches `DAYZ_P_ROOT` | warn |
 | 1 | `P:\` drive is mounted | **hard fail**, exit 1 |
 | 2 | DayZ Tools installed (`Bin\AddonBuilder\AddonBuilder.exe` found) | warn |
 | 3 | DayZ Diag installed (`DayZDiag_x64.exe` found; `/dayz-launch-test` needs it) | warn |
@@ -47,7 +48,7 @@ First hit wins. A `*_PATH` env var whose value fails its check is skipped, the n
 | **Vanilla scripts** | `P:\scripts` (vanilla `DZ_Scripts`, unpacked beside `P:\DZ`). Must exist and be non-empty; warns otherwise. |
 | **`P:\` and `P:\Mods\`** | Windows: fixed by DayZ convention, not configurable. Linux: `P:\` is a folder, `DAYZ_P_ROOT` env var, then the target of `pfx/dosdevices/p:` in the DayZ Tools Proton prefix (`steamapps/compatdata/830640/`). With neither, `P:\` counts as not mounted. `P:\Mods\` is `Mods` inside that folder. |
 
-Steam libraries come from the Steam root in the registry (or the default `C:\Program Files (x86)\Steam` and `C:\Program Files\Steam`) plus every library listed in its `steamapps\libraryfolders.vdf`, so installs on other drives are found. On Linux the Steam roots are `~/.local/share/Steam`, `~/.steam/steam` and the Flatpak `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`, with the same `libraryfolders.vdf` lookup; there is no registry. The DayZ tools themselves run under Proton.
+Steam libraries come from the Steam root in the registry (or the default `C:\Program Files (x86)\Steam` and `C:\Program Files\Steam`) plus every library listed in its `steamapps\libraryfolders.vdf`, so installs on other drives are found. On Linux the Steam roots are `$XDG_DATA_HOME/Steam` (default `~/.local/share/Steam`), `~/.steam/steam`, `~/.steam/root`, `~/.steam/debian-installation` (the Debian and Ubuntu package), the Flatpak `~/.var/app/com.valvesoftware.Steam/.local/share/Steam` and the Snap `~/snap/steam/common/.local/share/Steam`, each real folder once, with the same `libraryfolders.vdf` lookup; there is no registry. Paths are compared with symlinks resolved, so `/home` linked to `/var/home` (Fedora Atomic, Bazzite) matches. The DayZ tools themselves run under Proton.
 
 Other skills reuse these resolvers rather than re-implementing discovery: `find_dayz_tools`, `find_dayz_game`, `find_dayz_diag`, `find_dayz_server`, `find_vanilla_data`, `validate_p_mods` and `read_registry_string` (load `preflight.py` through `skills/_shared/skill_helpers.py`).
 
