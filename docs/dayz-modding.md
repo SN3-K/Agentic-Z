@@ -315,6 +315,7 @@ All DayZ skills resolve paths in this order: env var → Windows registry (Tools
 | `DAYZ_SERVER_PATH` | DayZ Server install (containing `DayZServer_x64.exe`). Read by `find_dayz_server()`; `/dayz-add-server` copies the mission template from it. `/dayz-launch-test` runs the diag build and does not use it. | `/dayz-add-server` |
 | `DAYZ_VANILLA_DATA_PATH` | Folder on `P:\` containing unpacked vanilla DayZ PBOs (default candidates: `P:\dz`, `P:\DZ`, `P:\dta`) | preflight, future skills that read vanilla configs |
 | `DAYZ_P_ROOT` | Linux only: the folder that is the `P:` work drive. If it is unset, the target of `pfx/dosdevices/p:` in the DayZ Tools Proton prefix (`steamapps/compatdata/830640/`) is used. Ignored on Windows, where `P:\` is the drive letter. | every skill that reads `P:\` (through `skills/_shared/platform_env.py`) |
+| `DAYZ_PROTON` | Linux only: the Proton folder (the one holding the `proton` script) that runs the DayZ Tools programs. If it is unset, the Proton Steam uses for DayZ Tools is used (Steam's compatibility setting, else the version that last ran the DayZ Tools prefix). Ignored on Windows. | every skill that runs a DayZ Tools program (through `skills/_shared/platform_env.py`) |
 | `DAYZ_WORK_DRIVE` | Folder that WorkDrive mounts as `P:\`. If it is unset, the cached path from the last mount is used, then DayZ Tools' `settings.ini` `[ProjectDrive] path`. There is no default and no registry lookup: if none of these is found, `/dayz-workdrive` fails and asks for `--path`. | `/dayz-workdrive` |
 
 PowerShell example:

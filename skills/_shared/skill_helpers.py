@@ -32,8 +32,10 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from platform_env import (  # noqa: E402,F401
-    DETACH_FLAGS, IS_WINDOWS, child_ci, detach_kwargs, kill_posix_processes, link_cmd, make_dir_link,
-    p_root, p_root_hint, posix_processes, remove_dir_link, rmtree_cmd, to_wine_path, unlink_cmd,
+    DETACH_FLAGS, IS_WINDOWS, ProtonError, child_ci, detach_kwargs, find_proton, find_steam_runtime,
+    kill_posix_processes, launch_windows_tool, link_cmd, make_dir_link, p_root, p_root_hint, posix_processes,
+    remove_dir_link, required_runtime_appid, rmtree_cmd, run_windows_tool, to_wine_path, unlink_cmd,
+    windows_tool_cmd,
 )
 
 SKILLS_DIR = Path(__file__).resolve().parents[1]

@@ -8,8 +8,9 @@ that folder through p_root(), so the rest of the code only sees a Path.
 
 It also holds the few OS calls the skills share: directory links (a junction
 or symlink on Windows, a symlink on Linux), the shell commands quoted in fix
-hints, finding and killing processes by image name on Linux, and the Popen
-arguments that detach a launched program.
+hints, finding and killing processes by image name on Linux, the Popen
+arguments that detach a launched program, and running the Windows DayZ Tools
+programs (directly on Windows, through Steam Proton on Linux).
 
 Stdlib only, and it imports nothing else from the repo, so dayz-preflight and
 the skills that do not load skill_helpers can import it directly:
@@ -359,6 +360,369 @@ def detach_kwargs() -> dict:
     return {"creationflags": DETACH_FLAGS} if IS_WINDOWS else {"start_new_session": True}
 
 
+# ------------------------------------------------------------ Windows tools (Proton on Linux)
+
+# Proton folder to use instead of the one Steam picks for DayZ Tools.
+PROTON_ENV = "DAYZ_PROTON"
+
+
+class ProtonError(RuntimeError):
+    """Proton, the Steam Linux Runtime it needs, or the DayZ Tools prefix cannot be found,
+    or a program did not start under Proton.
+
+    Most messages are one line that ends with the fix; a failed start ends with
+    Proton's last output lines instead.
+    """
+
+
+def parse_vdf(text: str) -> dict:
+    """A Steam VDF/ACF text file as nested dicts of strings.
+
+    Enough for config.vdf, toolmanifest.vdf, compatibilitytool.vdf and
+    appmanifest_*.acf: quoted keys and values, and { } blocks.
+    """
+    root: dict = {}
+    stack = [root]
+    key = None
+    for m in re.finditer(r'"((?:[^"\\]|\\.)*)"|([{}])', text):
+        if m.group(2) == "{":
+            child: dict = {}
+            stack[-1][key if key is not None else ""] = child
+            stack.append(child)
+            key = None
+        elif m.group(2) == "}":
+            if len(stack) > 1:
+                stack.pop()
+            key = None
+        elif key is None:
+            key = m.group(1).replace("\\\\", "\\")
+        else:
+            stack[-1][key] = m.group(1).replace("\\\\", "\\")
+            key = None
+    return root
+
+
+def _read_vdf(path: Path) -> dict:
+    """parse_vdf of a file; {} when it is missing or unreadable."""
+    try:
+        return parse_vdf(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return {}
+
+
+def _vdf_find(tree: dict, name: str):
+    """The value of the first key called name (any case) anywhere in tree, or None."""
+    for key, value in tree.items():
+        if key.lower() == name.lower():
+            return value
+        if isinstance(value, dict):
+            found = _vdf_find(value, name)
+            if found is not None:
+                return found
+    return None
+
+
+def _sub_dirs(folder: Path) -> list[Path]:
+    """The folders inside folder, sorted; [] when it cannot be listed."""
+    try:
+        return sorted(entry for entry in folder.iterdir() if entry.is_dir())
+    except OSError:
+        return []
+
+
+def _is_proton(folder: Path) -> bool:
+    return (folder / "proton").is_file()
+
+
+def _compat_tool_names(steam_roots: list[Path]) -> list[str]:
+    """The compatibility tool names config.vdf sets for DayZ Tools: its own mapping first, then the default ("0")."""
+    mappings = [_vdf_find(_read_vdf(root / "config" / "config.vdf"), "CompatToolMapping") for root in steam_roots]
+    names = []
+    for appid in (DAYZ_TOOLS_APPID, "0"):
+        for mapping in mappings:
+            entry = mapping.get(appid) if isinstance(mapping, dict) else None
+            if isinstance(entry, dict) and entry.get("name"):
+                names.append(entry["name"])
+    return names
+
+
+def _custom_tools(steam_roots: list[Path]) -> dict[str, Path]:
+    """Internal name -> folder of each tool in <steam root>/compatibilitytools.d (GE-Proton and the like)."""
+    tools: dict[str, Path] = {}
+    for root in steam_roots:
+        for folder in _sub_dirs(root / "compatibilitytools.d"):
+            compat_tools = _vdf_find(_read_vdf(folder / "compatibilitytool.vdf"), "compat_tools")
+            if not isinstance(compat_tools, dict):
+                continue
+            for name, info in compat_tools.items():
+                install_path = info.get("install_path", ".") if isinstance(info, dict) else "."
+                tools.setdefault(name, folder / install_path)
+    return tools
+
+
+def _official_folder_names(name: str) -> list[str]:
+    """The steamapps/common folder names Valve's Proton with this internal name can have.
+
+    proton_9 is "Proton 9.0", proton_63 is "Proton 6.3"; a folder may add a
+    suffix such as " (Beta)", which the caller allows.
+    """
+    if name == "proton_experimental":
+        return ["Proton - Experimental"]
+    if name == "proton_hotfix":
+        return ["Proton Hotfix"]
+    m = re.fullmatch(r"proton_(\d+)", name)
+    if not m:
+        return []
+    digits = m.group(1)
+    names = [f"Proton {digits}.0"]
+    if len(digits) > 1:
+        names.append(f"Proton {digits[0]}.{digits[1:]}")
+    return names
+
+
+def _proton_by_name(name: str, steam_roots: list[Path], libraries: list[Path]) -> Optional[Path]:
+    """The installed Proton folder for a compatibility tool name, or None."""
+    custom = _custom_tools(steam_roots).get(name)
+    if custom is not None and _is_proton(custom):
+        return custom
+    for base in _official_folder_names(name):
+        for lib in libraries:
+            common = lib / "steamapps" / "common"
+            if _is_proton(common / base):
+                return common / base
+            for folder in _sub_dirs(common):
+                if folder.name.startswith(base + " ") and _is_proton(folder):
+                    return folder
+    return None
+
+
+def _major_minor(text: str) -> Optional[str]:
+    """"9.0" from a version such as "9.0-203" or "1749140930 proton-9.0-4f"."""
+    m = re.search(r"(\d+)\.(\d+)", text)
+    return f"{m.group(1)}.{m.group(2)}" if m else None
+
+
+def _read_version(path: Path) -> Optional[str]:
+    try:
+        return _major_minor(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None
+
+
+def _proton_matching_prefix(steam_roots: list[Path], libraries: list[Path]) -> Optional[Path]:
+    """The installed Proton with the major.minor version that last ran the DayZ Tools prefix, or None."""
+    wanted = None
+    for lib in libraries:
+        wanted = _read_version(lib / "steamapps" / "compatdata" / DAYZ_TOOLS_APPID / "version")
+        if wanted:
+            break
+    if not wanted:
+        return None
+    candidates = [folder for lib in libraries for folder in _sub_dirs(lib / "steamapps" / "common")
+                  if folder.name.startswith("Proton")]
+    candidates += list(_custom_tools(steam_roots).values())
+    for folder in candidates:
+        if _is_proton(folder) and _read_version(folder / "version") == wanted:
+            return folder
+    return None
+
+
+def find_proton(steam_root: Optional[Path] = None) -> Optional[Path]:
+    """The Proton folder that runs the DayZ Tools programs on Linux, or None (always None on Windows).
+
+    First hit wins:
+      1. $DAYZ_PROTON (None when it is set but holds no proton file)
+      2. the compatibility tool Steam's config.vdf sets for DayZ Tools (830640)
+      3. the default compatibility tool ("0")
+      4. the installed Proton whose version last ran the DayZ Tools prefix
+    steam_root limits the search to one Steam install; default: every one found.
+    """
+    if IS_WINDOWS:
+        return None
+    override = os.environ.get(PROTON_ENV)
+    if override:
+        folder = Path(override).expanduser()
+        return folder if _is_proton(folder) else None
+    roots = [steam_root] if steam_root is not None else linux_steam_roots()
+    libraries = steam_libraries(roots)
+    for name in _compat_tool_names(roots):
+        folder = _proton_by_name(name, roots, libraries)
+        if folder is not None:
+            return folder
+    return _proton_matching_prefix(roots, libraries)
+
+
+def required_runtime_appid(proton_dir: Path) -> Optional[str]:
+    """The Steam app id of the Linux Runtime a Proton runs in (its toolmanifest.vdf), or None for old builds without one."""
+    appid = _vdf_find(_read_vdf(proton_dir / "toolmanifest.vdf"), "require_tool_appid")
+    return appid if isinstance(appid, str) and appid else None
+
+
+def find_steam_runtime(proton_dir: Path) -> Optional[Path]:
+    """The _v2-entry-point of the Steam Linux Runtime proton_dir needs.
+
+    None when the Proton needs no runtime (required_runtime_appid is None) or
+    the runtime is not installed in any Steam library; tell them apart with
+    required_runtime_appid.
+    """
+    appid = required_runtime_appid(proton_dir)
+    if appid is None:
+        return None
+    for lib in steam_libraries(linux_steam_roots()):
+        installdir = _vdf_find(_read_vdf(lib / "steamapps" / f"appmanifest_{appid}.acf"), "installdir")
+        if isinstance(installdir, str) and installdir:
+            entry = lib / "steamapps" / "common" / installdir / "_v2-entry-point"
+            if entry.is_file():
+                return entry
+    return None
+
+
+def _proton_missing_message() -> str:
+    override = os.environ.get(PROTON_ENV)
+    if override:
+        return (f"{PROTON_ENV} is {override}, which has no proton file. "
+                f"Point {PROTON_ENV} at a Proton folder (the one holding the proton script).")
+    return ("no Proton found for DayZ Tools. In Steam, open DayZ Tools > Properties > Compatibility and "
+            f"force a Proton version, or set {PROTON_ENV} to a Proton folder.")
+
+
+def _runtime_missing_message(proton_dir: Path, appid: str) -> str:
+    return (f"{proton_dir.name} needs the Steam Linux Runtime (app {appid}), which is not installed. "
+            "Install it from the Steam library (Tools), or start DayZ Tools once from Steam.")
+
+
+def windows_tool_cmd(exe, args: list[str]) -> tuple[list[str], dict]:
+    """(argv, extra environment) that run the Windows program exe with args.
+
+    Windows: the program itself and no extra environment. Linux: the Steam
+    Linux Runtime's entry point running Proton's run verb on exe, in the
+    DayZ Tools prefix, so P: is mapped. The run verb, not waitforexitandrun:
+    waitforexitandrun first waits for every process in the prefix to exit, and
+    the prefix is shared by all DayZ Tools, so an open Workbench or Object
+    Builder would block every build, pack and registry call until it closed. args go through unchanged: callers
+    turn path arguments into P:\\ or Z:\\ paths with to_wine_path. They are
+    passed as argv, not through cmd.exe, so % and cmd operators in them are
+    taken literally; the % and quote limits of run_windows_tool do not apply
+    here. Raises ProtonError when Proton, its runtime or the prefix cannot be found.
+    """
+    if IS_WINDOWS:
+        return [str(exe), *args], {}
+    proton = find_proton()
+    if proton is None:
+        raise ProtonError(_proton_missing_message())
+    prefix = tools_prefix()
+    if prefix is None:
+        raise ProtonError(f"the DayZ Tools Proton prefix (steamapps/compatdata/{DAYZ_TOOLS_APPID}) is missing. "
+                          "Install DayZ Tools in Steam and start it once.")
+    env = {
+        # tools_prefix() found the prefix in a Steam library, so a Steam install exists.
+        "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(linux_steam_roots()[0]),
+        "STEAM_COMPAT_DATA_PATH": str(prefix.parent),
+    }
+    # Both the proton script and _v2-entry-point take exe as a Linux path.
+    command = [str(proton / "proton"), "run", str(exe), *args]
+    appid = required_runtime_appid(proton)
+    if appid is None:
+        return command, env
+    entry = find_steam_runtime(proton)
+    if entry is None:
+        raise ProtonError(_runtime_missing_message(proton, appid))
+    return [str(entry), "--verb=run", "--", *command], env
+
+
+# What run_windows_tool runs through cmd.exe under Proton. The program, its arguments and the
+# output file come in through environment variables, never as text in the .bat: Wine's cmd reads
+# a .bat in the locale's OEM code page, which breaks non-ASCII paths, while it takes environment
+# variables from UTF-8 correctly. cmd still parses the expanded values, so arguments are quoted.
+_RUN_BAT = '@"%AZ_EXE%" %AZ_ARGS% > "%AZ_OUT%" 2>&1\r\n@exit /b %ERRORLEVEL%\r\n'
+
+
+def _quote_arg(arg: str) -> str:
+    """One argument for a Windows command line (MS C runtime rules), quoted when cmd or the program would split it.
+
+    Quoted when it is empty or holds whitespace or a cmd operator. A run of
+    backslashes right before the closing quote is doubled so it does not
+    escape the quote: P:\\My Dir\\ becomes "P:\\My Dir\\\\".
+    """
+    if arg and not re.search(r"[\s&|<>^()]", arg):
+        return arg
+    trailing = "\\" * (len(arg) - len(arg.rstrip("\\")))
+    return f'"{arg}{trailing}"'
+
+
+def _check_cmd_value(what: str, value: str) -> None:
+    """Raise ProtonError when value cannot pass through Wine's cmd.exe intact.
+
+    Wine's cmd expands % again inside the values of AZ_EXE, AZ_ARGS and
+    AZ_OUT (Windows' cmd does not), and a " or a line break would end the
+    quoting or the command line.
+    """
+    if "%" in value:
+        raise ProtonError(f"the {what} {value!r} contains %: paths and arguments containing % are not supported "
+                          "under Proton. Rename the folder, or leave out the %.")
+    if '"' in value or "\n" in value or "\r" in value:
+        raise ProtonError(f"the {what} {value!r} contains a double quote or a line break, which cannot be passed "
+                          "to a Windows program under Proton. Rename it.")
+
+
+def run_windows_tool(exe, args: list[str], *, cwd=None, timeout=None) -> tuple[int, str]:
+    """Run the Windows program exe to the end; returns (exit code, its stdout and stderr together).
+
+    On Linux, Proton gives the program its own console, so its output never
+    reaches this process. It runs instead through cmd.exe and a fixed .bat that
+    redirects the output to a file, both in a temporary folder that is removed
+    afterwards. Because the command goes through Wine's cmd, the program path,
+    the output path and every argument must hold no %, " or line break: those
+    raise ProtonError before anything starts. Non-ASCII characters are fine.
+    Raises ProtonError like windows_tool_cmd, also when Proton fails before the
+    program starts, and subprocess.TimeoutExpired.
+    """
+    if IS_WINDOWS:
+        argv, _ = windows_tool_cmd(exe, args)
+        result = subprocess.run(argv, cwd=cwd, timeout=timeout, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return result.returncode, result.stdout.decode("utf-8", errors="replace")
+    wine_exe = to_wine_path(Path(exe))
+    _check_cmd_value("program path", wine_exe)
+    for arg in args:
+        _check_cmd_value("argument", arg)
+    with tempfile.TemporaryDirectory(prefix="agentic-z-proton-") as tmp:
+        bat = Path(tmp) / "run.bat"
+        output = Path(tmp) / "output.txt"
+        wine_output = to_wine_path(output)
+        _check_cmd_value("temporary output path", wine_output)  # TMPDIR is the user's
+        bat.write_bytes(_RUN_BAT.encode("ascii"))
+        argv, env = windows_tool_cmd("cmd.exe", ["/c", to_wine_path(bat)])
+        env = {**os.environ, **env, "AZ_EXE": wine_exe, "AZ_ARGS": " ".join(_quote_arg(a) for a in args),
+               "AZ_OUT": wine_output}
+        result = subprocess.run(argv, cwd=cwd, timeout=timeout, env=env,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            # The tools may write cp1252; replace what is not UTF-8 rather than fail.
+            text = output.read_bytes().decode("utf-8", errors="replace")
+        except OSError:
+            # The program never started (Proton failed before it). Raise rather than return
+            # Proton's exit code, so callers never mistake it for the program's own answer.
+            proton_lines = result.stdout.decode("utf-8", errors="replace").strip().splitlines()
+            said = "\n".join(proton_lines[-5:]) or "(nothing)"
+            raise ProtonError(f"{Path(exe).name} did not start under Proton (exit code "
+                              f"{result.returncode}). Proton said:\n{said}")
+    return result.returncode, text
+
+
+def launch_windows_tool(exe, args: list[str], *, cwd=None) -> subprocess.Popen:
+    """Start the Windows GUI program exe detached (Workbench, Object Builder) and return at once.
+
+    Its output goes nowhere: a detached child holding this process's stdout
+    would keep the caller's pipe open after this script exits.
+    Raises ProtonError like windows_tool_cmd.
+    """
+    argv, env = windows_tool_cmd(exe, args)
+    return subprocess.Popen(argv, cwd=cwd, env={**os.environ, **env} if env else None, close_fds=True,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            **detach_kwargs())
+
+
 # ------------------------------------------------------------ host checks (Linux)
 
 # Filesystems that cannot hold symlinks: P:\<Mod> and P:\Mods are symlinks on Linux.
@@ -541,6 +905,21 @@ def host_issues(p: Optional[Path] = None, game_root: Optional[Path] = None,
     p = p_root() if p is None else p
     p_ok = p != NO_P_ROOT and p.is_dir()
     prefix = tools_prefix()
+
+    # Only the build and launch skills run Proton, so a missing one is a warning.
+    proton = find_proton()
+    runtime_appid = required_runtime_appid(proton) if proton is not None else None
+    if proton is None:
+        add("warn", "proton", _proton_missing_message())
+    elif runtime_appid is not None and find_steam_runtime(proton) is None:
+        add("warn", "steam_runtime", _runtime_missing_message(proton, runtime_appid))
+    else:
+        add("ok", "proton", f"Proton for DayZ Tools: {proton}")
+    sandboxed = _tools_install_kind(prefix)
+    if sandboxed in ("flatpak", "snap"):
+        add("warn", "proton_sandbox", f"DayZ Tools run in the Steam {sandboxed.capitalize()}; "
+                                      "starting Proton from outside the Steam sandbox is not supported yet, so the "
+                                      "build and launch skills cannot run the tools. Use a native Steam install.")
 
     if p_ok:
         kind = fs_type(p)
