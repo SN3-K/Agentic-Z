@@ -39,7 +39,7 @@ WORKSPACE = PROJECT_DIR / "workspace"
 # Whole-repo clones for tree links to a subfolder; workspace/<Name> links to the subfolder.
 IMPORTS = PROJECT_DIR / ".imports"
 ADD_SCAFFOLD = h.SKILLS_DIR / "dayz-add-scaffold" / "add_scaffold.py"
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 
 OK, WARN, FAIL = h.OK, h.WARN, h.FAIL
 INFO = "[INFO] "

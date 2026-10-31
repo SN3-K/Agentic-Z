@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
 import skill_helpers as h  # noqa: E402
 
 NEW_MOD = h.SKILLS_DIR / "dayz-new-mod" / "new_mod.py"
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 
 OK, WARN, FAIL = h.OK, h.WARN, h.FAIL
 SKIP = "[SKIP] "

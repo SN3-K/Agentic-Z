@@ -1,7 +1,7 @@
 """Environment checks for /dayz-init.
 
 Each check returns None (fine) or an EnvIssue:
-  AUTOFIX    /dayz-init fixes it itself (mount P:\\)
+  AUTOFIX    /dayz-init fixes it itself (mount P:\\; Windows only)
   HARD_STOP  the user has to act (install DayZ Tools, extract game data, ...)
 
 Every check is read-only. Paths are resolved with the shared dayz-preflight resolvers so this check and
@@ -17,9 +17,9 @@ from enum import Enum
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
-from skill_helpers import preflight  # noqa: E402
+from skill_helpers import IS_WINDOWS, p_root, p_root_hint, preflight  # noqa: E402
 
-P_MODS = Path("P:\\Mods")
+P_MODS = p_root() / "Mods"
 
 
 class Severity(Enum):
@@ -47,9 +47,12 @@ def check_python() -> EnvIssue | None:
 
 
 def p_drive_mounted() -> bool:
-    """Check P:\\ via the logical-drive bitmask (no disk I/O, no popup risk)."""
-    if sys.platform != "win32":
-        return False
+    """Check P:\\ via the logical-drive bitmask (no disk I/O, no popup risk).
+
+    On Linux P: is a folder (platform_env.p_root), so it counts when that folder exists.
+    """
+    if not IS_WINDOWS:
+        return p_root().is_dir()
     import ctypes
 
     return bool(ctypes.windll.kernel32.GetLogicalDrives() & (1 << 15))  # bit 15 = P
@@ -58,6 +61,10 @@ def p_drive_mounted() -> bool:
 def check_p_drive() -> EnvIssue | None:
     if p_drive_mounted():
         return None
+    if not IS_WINDOWS:
+        # /dayz-workdrive only mounts Windows drive letters; the user maps the folder.
+        return EnvIssue(name="p_drive", severity=Severity.HARD_STOP,
+                        message=f"P:\\ work drive folder not found. {p_root_hint()}")
     return EnvIssue(
         name="p_drive",
         severity=Severity.AUTOFIX,

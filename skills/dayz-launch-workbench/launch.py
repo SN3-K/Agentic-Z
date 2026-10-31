@@ -29,7 +29,7 @@ import skill_helpers as h  # noqa: E402
 
 # PROJECT_DIR = user's project, used to resolve a relative --gproj path.
 PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 
 OK, WARN, FAIL = h.OK, h.WARN, h.FAIL
 INFO = "[INFO] "

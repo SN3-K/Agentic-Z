@@ -68,6 +68,7 @@ def test_first_run_links_everything_then_second_run_is_ok(env):
     assert counts["ok"] == 3 and counts["linked"] == 0
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_failed_junction_shows_the_mklink_error(env, monkeypatch, capsys):
     _, _, target_dir, cfg = env
 
@@ -273,6 +274,7 @@ def _main_on_nt(monkeypatch, cfg):
     return sync.main()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_note_skipped_when_only_old_link_removal_failed(env, monkeypatch, capsys):
     _, skills, target_dir, cfg = env
     target_dir.mkdir(parents=True)
@@ -287,6 +289,7 @@ def test_junction_note_skipped_when_only_old_link_removal_failed(env, monkeypatc
     assert "cannot remove old link" in out and "junction fallback" not in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_note_skipped_when_only_prune_failed(env, monkeypatch, capsys):
     _, skills, target_dir, cfg = env
     target_dir.mkdir(parents=True)
@@ -301,6 +304,7 @@ def test_junction_note_skipped_when_only_prune_failed(env, monkeypatch, capsys):
     assert "[FAILED]  prune orphan" in out and "junction fallback" not in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_note_shown_when_make_link_failed(env, monkeypatch, capsys):
     _, _, _, cfg = env
 

@@ -101,7 +101,7 @@ class GateError(Exception):
     """The gate itself cannot run (exit 2); not a verdict on the mod."""
 
 
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 
 
 def install_visual_helper() -> None:

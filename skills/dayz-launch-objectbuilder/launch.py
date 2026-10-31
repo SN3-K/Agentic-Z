@@ -27,7 +27,7 @@ import skill_helpers as h  # noqa: E402
 # else the nearest folder at or above the current one holding the /dayz-init cache,
 # else the current folder), so a run from workspace\<mod>\ resolves the same way.
 PROJECT_DIR = h.load_module("dayz_launch_ob_state", h.DAYZ_INIT_STATE).find_project_dir()
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 
 OK, WARN, FAIL = h.OK, h.WARN, h.FAIL
 INFO = "[INFO] "

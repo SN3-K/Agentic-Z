@@ -164,6 +164,8 @@ def test_layout_errors_report_line_and_fix(broken, line, fragment):
     ],
 )
 def test_file_kind(path, kind):
+    if sys.platform != "win32":  # the same path as Linux writes it
+        path = path.replace("C:\\", "/").replace("\\", "/")
     assert ec.file_kind(path) == kind
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
 import skill_helpers as h  # noqa: E402
 
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 MODS_ROOT = P_DRIVE / "Mods"
 
 # copy2 preserves mtime; some filesystems store it at 2-second granularity.

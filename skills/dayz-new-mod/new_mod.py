@@ -40,7 +40,7 @@ PROJECT_DIR = _state.PROJECT_DIR
 WORKSPACE = PROJECT_DIR / "workspace"
 LOCAL_MEMORY = PROJECT_DIR / ".claude" / "local-memory"
 AUTHOR_CACHE = LOCAL_MEMORY / "dayz-author.txt"
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 
 
 def set_project_dir(project: Path) -> None:

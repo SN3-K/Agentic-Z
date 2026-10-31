@@ -238,7 +238,7 @@ def test_cache_is_bounded(fake_table, monkeypatch):
 # --------------- get_dayz_file ---------------
 
 
-@pytest.mark.parametrize("path", ["relative/file.c", r"C:\Windows\win.ini", r"D:\dz\x.c"])
+@pytest.mark.parametrize("path", ["relative/file.c", r"C:\Windows\win.ini", r"D:\dz\x.c", "/etc/passwd"])
 def test_get_file_refuses_paths_outside_p(path):
     with pytest.raises(ValueError):
         server.get_dayz_file_impl(path)
@@ -570,8 +570,9 @@ def test_snippet_is_cut_to_the_documented_limit():
 
 @pytest.fixture
 def temp_drive(monkeypatch, tmp_path):
-    """Let get_dayz_file read tmp_path's drive in place of P:."""
+    """Let get_dayz_file read tmp_path's drive (Windows) or tmp_path itself (Linux) in place of P:."""
     monkeypatch.setattr(server, "ALLOWED_DRIVE", tmp_path.drive)
+    monkeypatch.setattr(server, "P_ROOT", tmp_path)
     return tmp_path
 
 
@@ -591,11 +592,33 @@ def test_get_file_normalises_dot_dot(temp_drive):
     assert out["path"] == str(temp_drive / "a.c")
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="P: is a drive letter only on Windows")
 def test_dot_dot_above_the_drive_root_stays_on_p():
     # normpath clamps `..` at the root, so the read stays on P: (and P:\Windows
     # does not exist), never reaching C:\Windows.
     with pytest.raises(FileNotFoundError, match=r"P:\\Windows"):
         server.get_dayz_file_impl(r"P:\..\..\Windows\win.ini")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="P: is a folder only on Linux")
+def test_dot_dot_above_the_p_root_stays_under_it(monkeypatch, tmp_path):
+    root = tmp_path / "p"
+    root.mkdir()
+    (tmp_path / "secret.c").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(server, "P_ROOT", root)
+    with pytest.raises(FileNotFoundError, match="secret"):  # P:\secret.c, under the root, does not exist
+        server.get_dayz_file_impl(r"P:\..\secret.c")
+    with pytest.raises(ValueError, match="outside P:"):
+        server.get_dayz_file_impl(str(root / ".." / "secret.c"))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="P: is a folder only on Linux")
+def test_indexed_p_path_reads_from_the_p_root_ignoring_case(monkeypatch, tmp_path):
+    (tmp_path / "DZ" / "data").mkdir(parents=True)
+    (tmp_path / "DZ" / "data" / "config.cpp").write_text(_TEXT, encoding="utf-8")
+    monkeypatch.setattr(server, "P_ROOT", tmp_path)
+    out = server.get_dayz_file_impl(r"P:\dz\data\config.cpp", 2, 2)
+    assert (out["path"], out["content"]) == (str(tmp_path / "DZ" / "data" / "config.cpp"), "two")
 
 
 def test_get_file_over_size_limit_needs_a_range(temp_drive, monkeypatch):

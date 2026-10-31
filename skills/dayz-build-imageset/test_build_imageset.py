@@ -1,5 +1,6 @@
 """Tests for the atlas packing logic in build_imageset.py (no Pillow or DayZ Tools needed)."""
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -605,7 +606,7 @@ def test_path_form_still_works_without_a_cached_project(monkeypatch, tmp_path):
     monkeypatch.setattr(bi.h, "resolve_project_dir", no_project)
     calls = _run_main(monkeypatch, tmp_path, [str(mod)])
     assert calls[0][2] == mod / "gui" / "imagesets"
-    calls = _run_main(monkeypatch, tmp_path, [".\\SomeFolder"])
+    calls = _run_main(monkeypatch, tmp_path, [f".{os.sep}SomeFolder"])
     assert calls[0][2] == mod / "gui" / "imagesets"
 
 

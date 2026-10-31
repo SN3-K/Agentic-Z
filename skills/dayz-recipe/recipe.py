@@ -46,7 +46,7 @@ import skill_helpers as h  # noqa: E402
 
 behavior = h.load_module("dayz_recipe_behavior", SKILLS_DIR / "dayz-gate" / "behavior.py")
 
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 PLAN_FILES = ("plan.md", behavior.CHECKS_FILENAME, "recipe.json")
 MOD_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 DRAFT_MARK = "<!-- dayz-recipe draft -->"
@@ -188,7 +188,7 @@ class Vanilla:
         """The definition of a class in a config root, trying the hint file first."""
         first = [self.root / hint] if hint else []
         if self._all is None:
-            self._all = sorted((self.root / "dz").rglob("config.cpp"))
+            self._all = sorted((h.child_ci(self.root, "dz")).rglob("config.cpp"))
         for path in first + self._all:
             for c in self._classes(path):
                 if c.name.lower() == name.lower() and c.root.lower() == root.lower():
@@ -198,7 +198,7 @@ class Vanilla:
     def find_any(self, name: str) -> Optional[ClassDef]:
         """The definition of a class in any config root of any config.cpp under dz/."""
         if self._all is None:
-            self._all = sorted((self.root / "dz").rglob("config.cpp"))
+            self._all = sorted((h.child_ci(self.root, "dz")).rglob("config.cpp"))
         for path in self._all:
             for c in self._classes(path):
                 if c.name.lower() == name.lower():
@@ -220,7 +220,7 @@ class Vanilla:
     def items_for_slots(self, root: str, slots: list[str]) -> dict[str, list[str]]:
         """Spawnable (scope 2) classes in a config root per slot their resolved inventorySlot names."""
         if self._all is None:
-            self._all = sorted((self.root / "dz").rglob("config.cpp"))
+            self._all = sorted((h.child_ci(self.root, "dz")).rglob("config.cpp"))
         index: dict[str, ClassDef] = {}
         for path in self._all:
             for c in self._classes(path):
@@ -250,7 +250,7 @@ class Vanilla:
 
     def find_script(self, pattern: str, hint: Optional[str] = None) -> Optional[tuple[Path, int]]:
         rx = re.compile(pattern, re.MULTILINE)
-        scripts = self.root / "scripts"
+        scripts = h.child_ci(self.root, "scripts")
         paths = ([scripts / hint] if hint else []) + sorted(scripts.rglob("*.c"))
         for path in paths:
             if not path.is_file():
@@ -574,7 +574,7 @@ def report(res: Result) -> dict:
 # --- cli ---------------------------------------------------------------------------
 
 def check_vanilla_root(root: Path) -> None:
-    if not (root / "dz").is_dir() or not (root / "scripts").is_dir():
+    if not h.child_ci(root, "dz").is_dir() or not h.child_ci(root, "scripts").is_dir():
         raise RecipeError(f"no vanilla data at {root} (it needs dz\\ and scripts\\). Mount P: with "
                           "/dayz-workdrive and check it with /dayz-preflight, then run the recipe again.")
 

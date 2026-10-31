@@ -41,7 +41,7 @@ TABLE_NAME = "chunks"
 # The new index is written here first and only swapped into TABLE_NAME once
 # the write succeeded, so a failed write never leaves the server without a table.
 STAGING_TABLE_NAME = TABLE_NAME + "_staging"
-P_ROOT = Path("P:\\")
+P_ROOT = h.p_root()
 
 # Cost-runaway backstop: refuse to embed more than this many chunks without
 # --force. A vanilla build is far below it, so hitting it means the walk scope grew.
@@ -1108,7 +1108,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     file_hashes: dict[str, str] = {}
 
     for folder in VANILLA_FOLDERS:
-        root = P_ROOT / folder
+        root = h.child_ci(P_ROOT, folder)
         if not root.exists():
             print(f"  {folder}/  (skipped: not present)")
             counts_by_folder[folder] = {}
@@ -1128,9 +1128,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         folder_counts: dict[str, dict[str, int]] = {}
         for f in tqdm(candidates, desc=f"  {folder}/", unit="f"):
             ft = EXT_TYPE_MAP[f.suffix.lower()]
+            # Hits and hashes are keyed by the P:\\ path on every OS (on Windows that is str(f)),
+            # so an index built on Linux reads the same as the downloadable one built on Windows.
+            key = h.to_wine_path(f, P_ROOT)
             digest = file_sha256(f)
             if digest:
-                file_hashes[str(f)] = digest
+                file_hashes[key] = digest
             if ft == "rvmat":
                 result = chunk_rvmat(f, seen_rvmat)
                 if result is None:
@@ -1148,6 +1151,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 continue
 
+            for c in produced:
+                c["path"] = key
             chunks.extend(produced)
             folder_counts.setdefault(ft, {"files": 0, "chunks": 0})
             folder_counts[ft]["files"] += 1

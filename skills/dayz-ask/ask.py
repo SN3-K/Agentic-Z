@@ -41,6 +41,7 @@ REPO = SKILLS_DIR.parent
 RAG_DIR = REPO / ".claude" / "mcp" / "dayz-rag"
 sys.path.insert(0, str(SKILLS_DIR / "_shared"))
 sys.path.insert(0, str(RAG_DIR))
+import platform_env  # noqa: E402  stdlib only, so it cannot fail like the imports below
 # A failed import is reported by main() as an ERROR line with exit 2, not a traceback.
 try:
     import skill_helpers as h  # noqa: E402
@@ -51,7 +52,7 @@ except Exception as _exc:  # noqa: BLE001
 else:
     IMPORT_ERROR = None
 
-P_DRIVE = Path("P:\\")
+P_DRIVE = platform_env.p_root()
 DEFAULT_TOP_K = 5
 MAX_TOP_K = 25
 DEFAULT_EXCERPT_LINES = 60
@@ -184,6 +185,16 @@ def _on_p(path: str) -> bool:
     return norm.startswith(os.path.normcase(str(P_DRIVE)))
 
 
+def _local_p_file(path: str) -> Optional[Path]:
+    """The file a hit names, or None when it is off P:.
+
+    On Linux the hit's P:\\ path (the index is built on Windows) is mapped under P_DRIVE.
+    """
+    if not platform_env.IS_WINDOWS:
+        return platform_env.local_p_path(path, P_DRIVE) if path else None
+    return Path(path) if _on_p(path) else None
+
+
 def _probe(snippet: str) -> list[str]:
     """The first lines of a snippet worth checking: three with some text, not lone braces."""
     lines = [_norm(x) for x in snippet.splitlines() if _norm(x)]
@@ -218,7 +229,8 @@ def verify_hit(hit: dict) -> dict:
         "context": hit.get("parent_context", ""),
         "distance": hit.get("distance"),
     }
-    lines = _read_lines(Path(path)) if _on_p(path) else None
+    local = _local_p_file(path)
+    lines = _read_lines(local) if local is not None else None
     if lines is None:
         return {**cite, "status": "changed", "reason": "file missing or not on P:\\"}
     probe = _probe(hit.get("snippet") or "")
@@ -371,7 +383,7 @@ def grep_vanilla(terms: list[str], folders: list[str], file_type: Optional[str],
     scanned = 0
     found = []  # (path, lines, terms present)
     for folder in folders:
-        base = root / folder
+        base = platform_env.child_ci(root, folder)
         if not base.is_dir():
             continue
         for dirpath, _dirs, files in os.walk(base):
@@ -501,7 +513,7 @@ def ask(question: str, top_k: int = DEFAULT_TOP_K, file_type: Optional[str] = No
     if not cites:
         cites = grep_vanilla(terms, folders, file_type, top_k)
         mode = "grep" if mode == "grep" or not cites else "rag+grep"
-        where = ", ".join(str(P_DRIVE / f) for f in folders)
+        where = ", ".join(str(platform_env.child_ci(P_DRIVE, f)) for f in folders)
         notes.append(f"Grep terms: {', '.join(terms) or '(none)'} in {where}")
     for c in cites:
         c["cite"] = f"{c['path']}:{c['line_start']}-{c['line_end']}"

@@ -24,6 +24,9 @@ try:
 except ImportError:  # reported with an install hint in main(); parsing and layout don't need it
     Image = ImageDraw = ImageFont = None
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
+import platform_env  # noqa: E402
+
 OK = "[OK]   "
 WARN = "[WARN] "
 NOTE = "[NOTE] "
@@ -35,7 +38,7 @@ REQUIREMENTS = Path(__file__).resolve().parent / "requirements.txt"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = PROJECT_ROOT / "output" / "layout-preview"
 # Vanilla layouts live on the DayZ work drive. A missing file there usually means the drive is not mounted.
-P_DRIVE = Path("P:/")
+P_DRIVE = platform_env.p_root()
 DEFAULT_SIZES = [(1280, 720), (1920, 1080), (2560, 1440), (3440, 1440)]
 # Largest width or height --sizes accepts. 8192 covers 8K (7680x4320); a bigger canvas
 # needs gigabytes of memory for one preview and is almost always a typo.
@@ -469,8 +472,15 @@ def inside_mod_workspace(out_dir: Path) -> bool:
 
 
 def on_unmounted_p(path: Path) -> bool:
-    """True when path is on P:\\ and P:\\ is not mounted, so the fix is /dayz-workdrive, not the path."""
-    return path.drive.upper() == P_DRIVE.drive.upper() and not P_DRIVE.exists()
+    """True when path is on P:\\ and P:\\ is not mounted, so the fix is /dayz-workdrive, not the path.
+
+    On Windows P:\\ is a drive letter; on Linux it is a folder with no drive, so the path must sit under it.
+    """
+    if P_DRIVE.exists():
+        return False
+    if P_DRIVE.drive:
+        return path.drive.upper() == P_DRIVE.drive.upper()
+    return path.is_relative_to(P_DRIVE)
 
 
 def preview(path: Path, sizes: list, out_dir: Optional[Path], show_hidden: bool = False,

@@ -54,7 +54,7 @@ lint = h.load_module("dayz_release_pack_lint", SKILLS_DIR / "dayz-lint" / "lint.
 ITEM_SECTIONS = ("CfgVehicles", "CfgWeapons", "CfgMagazines")
 # Named scope values some configs use instead of the number.
 SCOPE_WORDS = {"private": 0, "protected": 1, "public": 2}
-P_MODS = Path("P:\\Mods")
+P_MODS = h.p_root() / "Mods"
 
 # Conventional commit types and the changelog heading each one goes under.
 CHANGE_GROUPS = (("Added", ("feat",)), ("Fixed", ("fix",)))

@@ -355,6 +355,7 @@ def _junction(link: Path, target: Path) -> None:
     subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_imported_mod_linted_by_mod_dir_through_real_junctions_passes(mod, tmp_path, p_drive, monkeypatch, capsys):
     # /dayz-import-mod layout: workspace\MyMod is a junction to the outside source, and
     # P:\MyMod is a junction to workspace\MyMod. --mod-dir resolves to the source folder.

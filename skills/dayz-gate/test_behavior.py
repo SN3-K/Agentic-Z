@@ -220,6 +220,7 @@ def test_inject_refuses_twice_and_without_main():
 
 # --- instance copy -------------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_prepare_instance_copies_and_injects(project):
     original = (project / ".server" / "chernarus" / "mission" / "init.c").read_text(encoding="utf-8")
     prepared = behavior.prepare_instance(project, "chernarus", CHECKS)
@@ -235,6 +236,7 @@ def test_prepare_instance_copies_and_injects(project):
     assert (project / ".server" / "chernarus" / "mission" / "init.c").read_text(encoding="utf-8") == original
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_prepare_instance_copies_profile_settings_but_not_logs(project):
     src = project / ".server" / "chernarus" / "Profiles"
     (src / "CommunityOnlineTools" / "Roles").mkdir(parents=True)
@@ -257,12 +259,14 @@ def test_prepare_instance_copies_profile_settings_but_not_logs(project):
     assert (dst / "CommunityOnlineTools" / "Roles" / "admin.txt").read_text(encoding="utf-8") == "Admin 0\n"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_prepared_copy_passes_launch_test_instance_check(project):
     behavior.prepare_instance(project, "chernarus", CHECKS)
     _, _, mission_path, _ = launch.verify_instance_environment("chernarus-behavior", project, dry_run=True)
     assert mission_path == project / ".server" / "chernarus-behavior" / TEMPLATE
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_prepare_instance_twice_replaces_the_copy_and_keeps_logs(project):
     behavior.prepare_instance(project, "chernarus", CHECKS)
     log = project / ".server" / "chernarus-behavior" / "Profiles" / "script_old.log"
@@ -404,6 +408,7 @@ def test_logs_mode_without_logs_or_checks_is_an_error(project, capsys):
     assert (rc, first) == (2, "ERROR")
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_prepare_only(project, capsys):
     rc, first, data = run_main(["behavior", "MyMod", "--prepare-only", "--json"], capsys)
     assert (rc, first, data["instance"], data["checks"]) == (0, "PREPARED", "chernarus-behavior", len(IDS))
@@ -416,6 +421,7 @@ def _require_cf(project: Path) -> None:
     cfg.write_text(cfg.read_text(encoding="utf-8").replace('{"DZ_Data"}', '{"DZ_Data", "JM_CF_Scripts"}'), encoding="utf-8")
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_prepare_only_hint_lists_the_dependency_mods_before_the_mod(project, capsys):
     _require_cf(project)
     rc, first, text = run_main(["behavior", "MyMod", "--deps", "@CF", "Dabs", "--prepare-only"], capsys)
@@ -464,6 +470,7 @@ class FakeSession:
         self.now += seconds
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_full_run_launches_the_copy_and_stops_at_done(project, capsys):
     lines = (FIXTURES / "logs" / "script_pass.log").read_text(encoding="utf-8").splitlines()
     fake = FakeSession(project, lines)
@@ -475,6 +482,7 @@ def test_full_run_launches_the_copy_and_stops_at_done(project, capsys):
     assert fake.running == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_full_run_fails_on_checks_and_on_mod_script_errors(project, capsys):
     lines = (FIXTURES / "logs" / "script_fail.log").read_text(encoding="utf-8").splitlines()
     fake = FakeSession(project, lines)
@@ -485,6 +493,7 @@ def test_full_run_fails_on_checks_and_on_mod_script_errors(project, capsys):
     assert [f["check"] for f in data["failures"] if f["category"] == "behavior"] == ["vest-wear", "vest-pouch", "knife-hands"]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_full_run_uses_the_ready_pattern(project, capsys):
     """A mod that replaces CreateMission prints its own ready line; --ready-pattern finds it."""
     lines = (FIXTURES / "logs" / "script_pass.log").read_text(encoding="utf-8").splitlines()
@@ -512,6 +521,7 @@ def test_full_run_without_checks_file_is_an_error(project, capsys):
 
 # --- the test mission never started ------------------------------------------------
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_unstarted_mission_with_a_clean_session_is_an_error_not_a_fail(project, capsys):
     fake = FakeSession(project, ["12:00:01.204 SCRIPT       : Module: Game; loaded 415x files"])
     rc, first, text = run_main(["behavior", "MyMod", "--done-timeout", "6"], capsys, fake.runtime())
@@ -528,6 +538,7 @@ def test_unstarted_mission_in_logs_mode_is_an_error(project, capsys, tmp_path):
     assert (rc, first) == (2, "ERROR")
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_unstarted_mission_with_a_mod_error_still_fails(project, capsys):
     lines = (FIXTURES / "logs" / "script_fail.log").read_text(encoding="utf-8").splitlines()
     lines = [t for t in lines if "[AZ-BEHAVIOR]" not in t]
@@ -553,6 +564,7 @@ def test_full_run_refuses_a_session_it_did_not_start_without_yes(project, capsys
     assert fake.calls == [] and fake.running == [42]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_full_run_with_yes_stops_a_session_it_did_not_start(project, capsys):
     lines = (FIXTURES / "logs" / "script_pass.log").read_text(encoding="utf-8").splitlines()
     fake = FakeSession(project, lines)

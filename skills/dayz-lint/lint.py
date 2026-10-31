@@ -41,7 +41,7 @@ import edit_check  # noqa: E402
 triage = h.load_module("dayz_lint_triage", SKILLS_DIR / "dayz-gate" / "triage.py")
 pack_texture = h.load_module("dayz_lint_pack_texture", SKILLS_DIR / "dayz-pack-texture" / "pack_texture.py")
 
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 
 ERROR, WARNING = "error", "warning"
 
@@ -325,10 +325,11 @@ class Lint:
     def vanilla_patches(self) -> Optional[set[str]]:
         """Lowercased CfgPatches class names from the vanilla configs, or None when they are not on disk."""
         root = self.vanilla_root
-        if root is None or not (root / "DZ").is_dir():
+        if root is None or not h.child_ci(root, "DZ").is_dir():
             return None
         # Unpacked vanilla data: P:\DZ\ holds every addon, P:\scripts\ holds DZ_Scripts.
-        configs = [*(root / "DZ").rglob("config.cpp"), root / "scripts" / "config.cpp", root / "bin" / "config.cpp"]
+        configs = [*h.child_ci(root, "DZ").rglob("config.cpp"), h.child_ci(root, "scripts") / "config.cpp",
+                   h.child_ci(root, "bin") / "config.cpp"]
         names: set[str] = set()
         for cfg in configs:
             if cfg.is_file():

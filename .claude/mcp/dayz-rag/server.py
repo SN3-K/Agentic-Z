@@ -40,6 +40,8 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import voyage_common  # noqa: E402  .env/API-key loading and the retry rule, shared with the indexer
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "skills" / "_shared"))
+import platform_env  # noqa: E402  where P: is on Linux, and P:\\ paths mapped to it
 
 INDEX_ROOT = Path.home() / ".claude" / "dayz-search-index"
 TABLE_NAME = "chunks"
@@ -47,6 +49,8 @@ DEFAULT_EMBED_MODEL = "voyage-code-3"
 MAX_TOP_K = 25
 MAX_FILE_BYTES = 200_000
 ALLOWED_DRIVE = "P:"  # get_dayz_file reads only this drive (tests point it at a temp drive)
+# On Linux P: is this folder instead, and only paths under it are read (tests point it at a temp dir).
+P_ROOT = platform_env.p_root()
 SNIPPET_MAX_CHARS = 1500  # each search hit's snippet is cut to this many characters
 CACHE_MAX = 256  # repeated search answers kept in memory, oldest dropped first
 
@@ -237,8 +241,11 @@ def _check_stale(path_str: str) -> tuple[bool, Optional[str]]:
     built = _get_index_built_at()
     if built is None:
         return False, None
+    local = _local_path(path_str)
+    if local is None:
+        return False, None
     try:
-        st = Path(path_str).stat()
+        st = Path(local).stat()
     except OSError:
         return True, "missing"
     if st.st_mtime <= built:
@@ -246,11 +253,19 @@ def _check_stale(path_str: str) -> tuple[bool, Optional[str]]:
     recorded = _get_file_hashes().get(path_str)
     if recorded:
         try:
-            if hashlib.sha256(Path(path_str).read_bytes()).hexdigest() == recorded:
+            if hashlib.sha256(Path(local).read_bytes()).hexdigest() == recorded:
                 return False, None
         except OSError:
             return True, "missing"
     return True, "modified"
+
+
+def _local_path(path_str: str) -> Optional[str]:
+    """Where an indexed P:\\ path is on this machine: itself on Windows, under P_ROOT on Linux."""
+    if platform_env.IS_WINDOWS:
+        return path_str
+    local = platform_env.local_p_path(path_str, P_ROOT)
+    return None if local is None else str(local)
 
 
 def _format_hit(row: dict) -> dict:
@@ -366,7 +381,16 @@ def get_dayz_file_impl(path: str, line_start: Optional[int] = None, line_end: Op
     that junctions and symlinks under P:\\ (for example P:\\Mods or the
     P:\\<ModName> junctions to workspace/) are followed when the file is opened,
     so a path under P:\\ can read a file that physically lives elsewhere.
+
+    On Linux P: is the folder P_ROOT. A P:\\ path (as search hits give it) or a
+    path under P_ROOT is accepted; `..` is collapsed the same lexical way, and
+    the same note about links applies.
     """
+    if not platform_env.IS_WINDOWS:
+        local = platform_env.local_p_path(path, P_ROOT)
+        if local is None:
+            raise ValueError(f"refusing to read outside P: ({P_ROOT}) (got {path!r})")
+        return _read_p_file(local, line_start, line_end)
     p = Path(path)
     if not p.is_absolute():
         raise ValueError(f"path must be absolute (got {path!r})")
@@ -375,6 +399,11 @@ def get_dayz_file_impl(path: str, line_start: Optional[int] = None, line_end: Op
     normalized = Path(os.path.normpath(str(p)))
     if normalized.drive.upper() != ALLOWED_DRIVE.upper():
         raise ValueError(f"refusing to read outside P:\\ (normalized to {normalized})")
+    return _read_p_file(normalized, line_start, line_end)
+
+
+def _read_p_file(normalized: Path, line_start: Optional[int], line_end: Optional[int]) -> dict:
+    """The size-capped read behind get_dayz_file_impl, once the path is known to be on P:."""
     if not normalized.is_file():
         raise FileNotFoundError(f"not a file: {normalized}")
     size = normalized.stat().st_size

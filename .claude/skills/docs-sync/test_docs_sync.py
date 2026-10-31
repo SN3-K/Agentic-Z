@@ -162,7 +162,8 @@ def build_repo(root: Path, with_scripts: bool = False) -> Path:
             shutil.copy(HERE / name, dst / name)
         shared = root / "skills" / "_shared"
         shared.mkdir(parents=True, exist_ok=True)
-        shutil.copy(HERE.parents[2] / "skills" / "_shared" / "skill_helpers.py", shared / "skill_helpers.py")
+        for name in ("skill_helpers.py", "platform_env.py"):
+            shutil.copy(HERE.parents[2] / "skills" / "_shared" / name, shared / name)
     return root
 
 

@@ -951,9 +951,10 @@ def test_full_build_replaces_table_and_all_sidecars(tmp_path, monkeypatch):
     assert json.loads((idx / "config.json").read_text(encoding="utf-8"))["embed_model"] == "voyage-3.5"
     manifest = json.loads((idx / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["embed_model"] == "voyage-3.5" and manifest["total_chunks"] == 1
-    assert list(json.loads((idx / "file_hashes.json").read_text(encoding="utf-8"))) == [
-        str(tmp_path / "P" / "scripts" / "a.c")
-    ]
+    # Keyed by the P:\\ path: str(path) on Windows, P:\\scripts\\a.c for the P root folder on Linux.
+    expected = str(tmp_path / "P" / "scripts" / "a.c") if sys.platform == "win32" else "P:\\scripts\\a.c"
+    assert list(json.loads((idx / "file_hashes.json").read_text(encoding="utf-8"))) == [expected]
+    assert [r["path"] for r in db.tables[index.TABLE_NAME].rows] == [expected]
     assert not list(idx.glob("*.tmp"))
 
 

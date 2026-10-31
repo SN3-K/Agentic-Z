@@ -8,8 +8,9 @@ from env_check import EnvIssue, Severity, classify  # noqa: E402
 
 
 def _env(monkeypatch, mounted=True, tools=True, vanilla=True, p_mods_problem=None, mods_exists=True,
-         game=None):
+         game=None, windows=True):
     """game: a folder standing in for the DayZ install, or None when it isn't found."""
+    monkeypatch.setattr(env_check, "IS_WINDOWS", windows)
     monkeypatch.setattr(env_check, "p_drive_mounted", lambda: mounted)
     pf = env_check.preflight
     monkeypatch.setattr(pf, "find_dayz_tools", lambda: Path("C:/Tools") if tools else None)
@@ -31,6 +32,22 @@ def test_all_good(monkeypatch):
 def test_unmounted_p_is_autofix_and_skips_p_checks(monkeypatch):
     _env(monkeypatch, mounted=False, vanilla=False, p_mods_problem="missing")
     assert _names(env_check.run_all()) == [("p_drive", Severity.AUTOFIX)]
+
+
+def test_unmounted_p_on_linux_is_hard_stop(monkeypatch):
+    # /dayz-workdrive cannot mount a folder, so the user has to point at it.
+    _env(monkeypatch, mounted=False, vanilla=False, p_mods_problem="missing", windows=False)
+    [issue] = env_check.run_all()
+    assert (issue.name, issue.severity) == ("p_drive", Severity.HARD_STOP)
+    assert "work drive folder not found" in issue.message
+
+
+def test_p_drive_mounted_on_linux_is_the_p_root_folder(monkeypatch, tmp_path):
+    monkeypatch.setattr(env_check, "IS_WINDOWS", False)
+    monkeypatch.setattr(env_check, "p_root", lambda: tmp_path)
+    assert env_check.p_drive_mounted()
+    monkeypatch.setattr(env_check, "p_root", lambda: tmp_path / "missing")
+    assert not env_check.p_drive_mounted()
 
 
 def test_missing_tools_is_hard_stop_with_steam_link(monkeypatch):

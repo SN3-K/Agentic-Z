@@ -46,7 +46,8 @@ Skills resolve paths in this order: env var, then Windows registry (DayZ Tools o
 | `DAYZ_GAME_PATH` | DayZ game install root (containing `DayZ_x64.exe` and `DayZDiag_x64.exe`). | Preflight (`P:\Mods` junction target); the diag client resolver. |
 | `DAYZ_DIAG_PATH` | Direct path to `DayZDiag_x64.exe` (override for non-standard installs). | `/dayz-launch-test`. |
 | `DAYZ_SERVER_PATH` | DayZ Server install root (containing `DayZServer_x64.exe`). Only its mission templates are read; testing runs diag for both ends. | `/dayz-add-server` (mission copy). |
-| `DAYZ_VANILLA_DATA_PATH` | Folder on `P:\` containing the unpacked vanilla DayZ PBOs (default: `P:\dz`, which matches `P:\DZ` since Windows paths are case-insensitive; preflight also checks `P:\scripts`). | Preflight. |
+| `DAYZ_VANILLA_DATA_PATH` | Folder on `P:\` containing the unpacked vanilla DayZ PBOs (default: `P:\dz`, which also matches `P:\DZ`: Windows paths ignore case, and on Linux the folder is matched case-insensitively; preflight also checks `P:\scripts`). | Preflight. |
+| `DAYZ_P_ROOT` | Linux only: the folder that is the `P:` work drive; else the `P:` drive of the DayZ Tools Proton prefix. Ignored on Windows. | Every skill that reads `P:\`, through `skills/_shared/platform_env.py`. |
 | `DAYZ_WORK_DRIVE` | Folder to mount as `P:\`; else the cached path from the last mount, then DayZ Tools' `settings.ini` `[ProjectDrive] path` (registry keys are not a source). No default: with none of these, `/dayz-workdrive` fails and asks for `--path`. | `/dayz-workdrive`. |
 
 Skills use the shared resolvers in `dayz-preflight/preflight.py` (`find_dayz_tools`, `find_dayz_game`, `find_dayz_diag`, `find_dayz_server`, `find_vanilla_data`) rather than re-implementing path discovery, so the resolution order stays the same across every skill.

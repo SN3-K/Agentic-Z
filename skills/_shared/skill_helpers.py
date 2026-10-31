@@ -10,6 +10,7 @@ One copy of the logic every pipeline script needs:
   - creation flags that detach a launched GUI tool from the console (DETACH_FLAGS)
   - the active allowFilePatching setting in a serverDZ.cfg (file_patching_setting)
   - the free-UDP-port check run before a server launch (udp_port_free, gate_on_free_port)
+  - the OS-specific work drive folder from platform_env (IS_WINDOWS, p_root, child_ci)
 
 Import from a skill script with:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
@@ -26,6 +27,9 @@ import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from platform_env import IS_WINDOWS, child_ci, p_root, p_root_hint, to_wine_path  # noqa: E402,F401
 
 SKILLS_DIR = Path(__file__).resolve().parents[1]
 PREFLIGHT = SKILLS_DIR / "dayz-preflight" / "preflight.py"

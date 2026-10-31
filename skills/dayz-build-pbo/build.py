@@ -30,7 +30,7 @@ INCLUDE_LIST = Path(__file__).resolve().parent / "include.lst"
 # 1.0.240639 crashes on any -exclude= (ArgumentNullException in TextureHeaderBinazrizeTask,
 # because BuilderConfiguration leaves ExcludeListFilename null when -exclude is given).
 EXCLUDE_LIST = Path(__file__).resolve().parent / "exclude.lst"
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 MODS_ROOT = P_DRIVE / "Mods"
 TEMP_ROOT = P_DRIVE / "temp"
 

@@ -45,7 +45,7 @@ import skill_helpers as h  # noqa: E402
 sys.path.insert(0, str(REPO / "hooks"))
 import edit_check  # noqa: E402
 
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 SECTIONS = ("cfgvehicles", "cfgweapons", "cfgmagazines", "cfgammo")
 DAMAGE_TYPES = ("Health", "Blood", "Shock")
 # Widen the peer group at most this many parents above the nearest vanilla ancestor,
@@ -210,7 +210,7 @@ class Index:
 
 def load_vanilla(vanilla_root: Path, unread: Optional[list[dict]] = None) -> Index:
     """Index every config.cpp under <vanilla_root>/DZ. unread collects the files that do not tokenize."""
-    dz = vanilla_root / "DZ"
+    dz = h.child_ci(vanilla_root, "DZ")
     if not dz.is_dir():
         raise BalanceError(f"no vanilla data at {dz}: run /dayz-preflight to see what is missing (it names /dayz-workdrive when P: is not mounted), or pass --vanilla-root")
     unread = [] if unread is None else unread

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,7 @@ def test_sibling_with_metacharacter_is_refused(scope, tmp_path, capsys):
     assert not scope.SETTINGS_LOCAL.exists()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_real_workshop_folder_is_denied_in_posix_form(scope, monkeypatch):
     workshop = Path(r"C:\Program Files (x86)\Steam\steamapps\common\DayZ\!Workshop")
     monkeypatch.setattr(scope, "_game_workshop_dir", lambda: workshop)
@@ -135,6 +137,7 @@ def test_real_workshop_folder_is_denied_in_posix_form(scope, monkeypatch):
     assert _deny(scope) == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_posix_rule_path(scope):
     assert scope._posix_rule_path(Path(r"D:\Games\DayZ\!Workshop")) == "//d/Games/DayZ/!Workshop"
 

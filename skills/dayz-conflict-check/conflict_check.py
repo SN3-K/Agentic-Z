@@ -40,7 +40,7 @@ sys.path.insert(0, str(SKILLS_DIR / "_shared"))
 import skill_helpers as h  # noqa: E402
 
 GATE = SKILLS_DIR / "dayz-gate" / "gate.py"
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 ERROR, WARNING = "error", "warning"
 
 # rule -> (severity, owner, fix)
@@ -289,7 +289,7 @@ class Vanilla:
 
     @property
     def available(self) -> bool:
-        return self.root is not None and (self.root / "DZ").is_dir()
+        return self.root is not None and h.child_ci(self.root, "DZ").is_dir()
 
     def config_class(self, section: str, name: str) -> bool:
         """True when vanilla defines a class of this name in this Cfg section (keyed like Facts.classes)."""
@@ -298,9 +298,9 @@ class Vanilla:
             if self.available:
                 # About 200 config.cpp files and 20 MB of text; read once per run, only when
                 # both mods define the same config class.
-                print(f"reading vanilla config classes from {self.root / 'DZ'} (a few seconds)...",
+                print(f"reading vanilla config classes from {h.child_ci(self.root, 'DZ')} (a few seconds)...",
                       file=sys.stderr, flush=True)
-                for cfg in [*(self.root / "DZ").rglob("config.cpp"), self.root / "scripts" / "config.cpp"]:
+                for cfg in [*h.child_ci(self.root, "DZ").rglob("config.cpp"), h.child_ci(self.root, "scripts") / "config.cpp"]:
                     if cfg.is_file():
                         scan_config(read_text(cfg), str(cfg), facts)
             self._config = set(facts.classes)
@@ -309,7 +309,7 @@ class Vanilla:
     def script_class(self, name: str) -> bool:
         if self._script is None:
             facts = Facts("vanilla")
-            scripts = self.root / "scripts" if self.root else None
+            scripts = h.child_ci(self.root, "scripts") if self.root else None
             if scripts is not None and scripts.is_dir():
                 for c in scripts.rglob("*.c"):
                     scan_script(read_text(c), str(c), facts)

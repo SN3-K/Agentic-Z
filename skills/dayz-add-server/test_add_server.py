@@ -5,6 +5,7 @@ import importlib.util
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -360,6 +361,7 @@ def make_junction(link: Path, target: Path) -> None:
     assert srv.h.is_link(link)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_existing_template_junction_reported_present(monkeypatch, tmp_path, capsys):
     inst = tmp_path / ".server" / "test"
     (inst / "mission").mkdir(parents=True)
@@ -369,6 +371,7 @@ def test_existing_template_junction_reported_present(monkeypatch, tmp_path, caps
     assert "Junction dayzOffline.chernarusplus/ -> mission/ already present" in capsys.readouterr().out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_dangling_junction_after_project_move_is_replaced(tmp_path, capsys):
     # The project used to live in old/; its junction now points at a folder that is gone.
     old_mission = tmp_path / "old" / "mission"
@@ -389,6 +392,7 @@ def test_dangling_junction_after_project_move_is_replaced(tmp_path, capsys):
     assert "Removed stale junction" in out and "(template handshake)" in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_to_another_copy_is_replaced_and_the_copy_is_kept(tmp_path, capsys):
     other = tmp_path / "other-clone" / "mission"
     other.mkdir(parents=True)
@@ -418,6 +422,7 @@ def test_real_folder_at_template_name_is_refused_and_kept(monkeypatch, tmp_path)
     assert (real / "mine.txt").read_text(encoding="utf-8") == "keep"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_stale_junction_that_cannot_be_removed_exits_non_zero(monkeypatch, tmp_path):
     inst = tmp_path / ".server" / "test"
     (inst / "mission").mkdir(parents=True)
@@ -629,6 +634,7 @@ def test_same_template_rerun_is_accepted(server_install, tmp_path, capsys):
     assert "Mission already present" in capsys.readouterr().out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_unmarked_mission_is_identified_by_its_old_junction(tmp_path):
     inst = tmp_path / ".server" / "test"
     mission_dir = inst / "mission"
@@ -649,6 +655,7 @@ def test_hand_filled_mission_without_marker_or_junction_is_accepted(tmp_path, ca
     assert "Mission already present" in capsys.readouterr().out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_main_refuses_edited_cfg_template_without_refresh(server_install, monkeypatch, tmp_path):
     # The reviewer's case: cfg hand-edited to enoch, mission/ still holds Chernarus.
     inst = tmp_path / ".server" / "test"
@@ -668,6 +675,7 @@ def test_main_refuses_edited_cfg_template_without_refresh(server_install, monkey
     assert not os.path.lexists(inst / "dayzOffline.enoch")
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_template_switch_removes_the_old_junction(tmp_path, capsys):
     inst = tmp_path / ".server" / "test"
     mission_dir = inst / "mission"
@@ -683,6 +691,7 @@ def test_template_switch_removes_the_old_junction(tmp_path, capsys):
     assert "Removed junction dayzOffline.chernarusplus/" in capsys.readouterr().out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux support for directory links and scope rules lands in phase 2")
 def test_junction_to_another_folder_is_not_treated_as_an_old_template(tmp_path):
     inst = tmp_path / ".server" / "test"
     (inst / "mission").mkdir(parents=True)

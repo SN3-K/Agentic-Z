@@ -306,7 +306,7 @@ def test_all_uses_the_expansion_bundle_alone(tmp_path):
 def test_against_relative_source_folder(world, monkeypatch):
     source = make_mod(world / "src" / "OtherSource", prefix="OtherSource")
     monkeypatch.chdir(world)
-    for item in ("src/OtherSource", "src\\OtherSource", "./src/OtherSource"):
+    for item in ("src/OtherSource", f"src{os.sep}OtherSource", "./src/OtherSource"):
         assert cc.resolve_targets([item], False, world / "Mods", "MyVest") == [source.resolve()]
     # A bare word is a mod name first, and a folder in the current folder only when no such mod exists.
     (world / "CF").mkdir()

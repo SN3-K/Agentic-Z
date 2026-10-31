@@ -14,7 +14,10 @@ Path resolution order (first hit wins; each resolver's docstring has the detail)
     DayZ Server:  $DAYZ_SERVER_PATH, Steam libraries
     Vanilla data: $DAYZ_VANILLA_DATA_PATH, P:\\dz (no Steam fallback)
 Steam libraries are the Steam root from the registry (or the default install
-paths) plus every library in its steamapps\\libraryfolders.vdf.
+paths) plus every library in its steamapps\\libraryfolders.vdf. On Linux the
+Steam roots are the native and Flatpak installs, the tools run under Proton,
+and P:\\ is the folder platform_env.p_root() names ($DAYZ_P_ROOT, or the P:
+drive of the DayZ Tools Proton prefix).
 A *_PATH variable whose value fails its check is skipped and the next source is
 tried; the matching check_* function prints "[WARN] <VAR> ignored: <value>".
 
@@ -25,20 +28,23 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
+import platform_env  # noqa: E402
 
 OK = "[OK]   "
 WARN = "[WARN] "
 FAIL = "[FAIL] "
 
 # Fixed by DayZ engine convention. Module-level so tests can point them at tmp dirs.
-P_DRIVE = Path("P:\\")
+P_DRIVE = platform_env.p_root()
 MODS_LINK = P_DRIVE / "Mods"
-# Windows paths are case-insensitive, so P:\dz also matches the P:\DZ that Extract Game Data writes.
+# Looked up with platform_env.child_ci, so P:\dz also matches the P:\DZ that Extract Game Data
+# writes on Linux, where paths are case-sensitive (Windows ignores case anyway).
 VANILLA_DIR_NAMES = ("dz",)
 # DZ_Scripts is unpacked beside P:\DZ, not inside it (P:\scripts\config.cpp:3 declares class DZ_Scripts).
 VANILLA_SCRIPTS_DIR = "scripts"
@@ -101,15 +107,7 @@ def read_registry_string(hive, subkey: str, value_name: str) -> Optional[str]:
         return None
 
 
-def parse_library_folders(text: str) -> list[Path]:
-    """Library roots listed in a Steam steamapps/libraryfolders.vdf file.
-
-    VDF escapes backslashes, so "D:\\\\SteamLibrary" in the file is D:\\SteamLibrary.
-    """
-    return [
-        Path(m.group(1).replace("\\\\", "\\"))
-        for m in re.finditer(r'"path"\s+"([^"]+)"', text)
-    ]
+parse_library_folders = platform_env.parse_library_folders
 
 
 def _steam_common_dirs() -> list[Path]:
@@ -117,8 +115,15 @@ def _steam_common_dirs() -> list[Path]:
 
     Resolves the Steam root via the registry (falling back to the default
     install paths), then parses steamapps/libraryfolders.vdf so games
-    installed on non-default library drives are found too (#49).
+    installed on non-default library drives are found too (#49). On Linux
+    the roots are platform_env.linux_steam_roots().
     """
+    if not platform_env.IS_WINDOWS:
+        return [
+            lib / "steamapps" / "common"
+            for lib in platform_env.steam_libraries(platform_env.linux_steam_roots())
+            if (lib / "steamapps" / "common").is_dir()
+        ]
     steam_roots: list[Path] = []
     if sys.platform == "win32":
         import winreg
@@ -302,7 +307,7 @@ def find_vanilla_data() -> Optional[Path]:
     if env_override:
         candidates.append(Path(env_override))
 
-    candidates.extend(P_DRIVE / name for name in VANILLA_DIR_NAMES)
+    candidates.extend(platform_env.child_ci(P_DRIVE, name) for name in VANILLA_DIR_NAMES)
 
     for path in candidates:
         if _is_nonempty_dir(path):
@@ -312,21 +317,18 @@ def find_vanilla_data() -> Optional[Path]:
 
 def find_vanilla_scripts() -> Optional[Path]:
     """P:\\scripts (vanilla DZ_Scripts) if it exists and is non-empty, else None."""
-    path = P_DRIVE / VANILLA_SCRIPTS_DIR
+    path = platform_env.child_ci(P_DRIVE, VANILLA_SCRIPTS_DIR)
     return path if _is_nonempty_dir(path) else None
 
 
 def check_p_drive() -> bool:
     """P:\\ is mandatory. Hard fail if not mounted."""
     if P_DRIVE.is_dir():
-        print(f"{OK} P:\\ is mounted")
+        where = "" if platform_env.IS_WINDOWS else f" ({P_DRIVE})"
+        print(f"{OK} P:\\ is mounted{where}")
         return True
     print(f"{FAIL} P:\\ is NOT mounted", file=sys.stderr)
-    print(
-        "        Open DayZ Tools and mount the P drive "
-        "(Tools menu > Mount P drive), or run /dayz-workdrive.",
-        file=sys.stderr,
-    )
+    print(f"        {platform_env.p_root_hint()}", file=sys.stderr)
     return False
 
 
@@ -341,7 +343,8 @@ def check_dayz_tools() -> None:
         print(f"{OK} DayZ Tools found: {root}")
         return
     print(f"{WARN} DayZ Tools not detected")
-    print("        Tried: $DAYZ_TOOLS_PATH, Windows registry, Steam libraries.")
+    registry = "Windows registry, " if platform_env.IS_WINDOWS else ""
+    print(f"        Tried: $DAYZ_TOOLS_PATH, {registry}Steam libraries.")
     print("        Set DAYZ_TOOLS_PATH if your install is elsewhere.")
 
 

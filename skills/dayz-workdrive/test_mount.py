@@ -1,6 +1,7 @@
 """Tests for dayz-workdrive/mount.py: settings.ini parsing, resolution order, mount fallback."""
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -122,6 +123,7 @@ def test_main_unresolved_fails_with_path_hint(isolated, monkeypatch, capsys):
     monkeypatch.setattr(mount, "find_dayz_tools", lambda: tools)
     monkeypatch.setattr(mount, "is_p_mounted", lambda: False)
     monkeypatch.setattr(mount, "invoke_mount", lambda target: pytest.fail("must not mount"))
+    monkeypatch.setattr(mount.sys, "platform", "win32")
     monkeypatch.setattr("sys.argv", ["mount.py"])
     assert mount.main() == 1
     err = capsys.readouterr().err
@@ -223,6 +225,7 @@ def fake_drive(monkeypatch, tmp_path):
     monkeypatch.setattr(mount.subprocess, "run", fake_run)
     state["running"] = []  # processes the unmount guard sees; none by default
     monkeypatch.setattr(mount, "running_p_drive_users", lambda: state["running"])
+    monkeypatch.setattr(mount.sys, "platform", "win32")  # main() refuses elsewhere; Windows is faked above
     return exe, state
 
 
@@ -338,6 +341,7 @@ def test_main_warns_and_exits_0_when_cache_cannot_be_written(fake_drive, monkeyp
     assert "[WARN]" in out and "was not cached" in out and "Permission denied" in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="needs Windows path parsing and case rules")
 def test_main_relative_path_is_mounted_and_cached_absolute(fake_drive, monkeypatch, tmp_path):
     exe, state = fake_drive
     state["effects"][str(exe)] = True
@@ -576,6 +580,7 @@ def test_main_warns_when_path_differs_from_current_target(fake_drive, monkeypatc
     assert state["calls"] == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="needs Windows path parsing and case rules")
 def test_main_no_warning_when_path_matches_ignoring_case(fake_drive, monkeypatch, tmp_path, capsys):
     _, state = fake_drive
     state["mounted"] = True

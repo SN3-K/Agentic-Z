@@ -44,7 +44,7 @@ import skill_helpers as h  # noqa: E402
 sys.path.insert(0, str(REPO / "hooks"))
 import edit_check  # noqa: E402  (the config tokenizer the edit hook and /dayz-lint use)
 
-P_DRIVE = Path("P:\\")
+P_DRIVE = h.p_root()
 STORE = Path.home() / ".claude" / "dayz-upgrade-guard"
 INDEXER = SKILLS_DIR / "dayz-search-index" / "index.py"
 # 2: config keys are lower case, since DayZ config class names ignore case.
@@ -348,9 +348,9 @@ def _same_parent(a: Optional[str], b: Optional[str]) -> bool:
 
 def take_snapshot(p_root: Path, label: str = "") -> dict:
     """Read every vanilla class on p_root. Raises GuardError when there are no vanilla scripts."""
-    if not (p_root / "scripts").is_dir():
+    if not h.child_ci(p_root, "scripts").is_dir():
         raise GuardError(f"{p_root} has no scripts folder. Mount the work drive with /dayz-workdrive and unpack the game data first.")
-    if not (p_root / CONFIG_ROOT).is_dir():
+    if not h.child_ci(p_root, CONFIG_ROOT).is_dir():
         raise GuardError(f"{p_root} has no {CONFIG_ROOT} folder, so it holds no vanilla config.cpp files. "
                          "Unpack the game data fully first. Nothing was saved.")
     script: dict[str, dict] = {}
@@ -358,7 +358,7 @@ def take_snapshot(p_root: Path, label: str = "") -> dict:
     skipped: list[str] = []
     from_modded: set[str] = set()  # entries so far seen only as `modded class`
     for top in SCRIPT_ROOTS:
-        for path in _files(p_root / top, "*.c"):
+        for path in _files(h.child_ci(p_root, top), "*.c"):
             rel = path.relative_to(p_root).as_posix()
             try:
                 decls = parse_script(path.read_text(encoding="utf-8", errors="replace"))
@@ -380,7 +380,7 @@ def take_snapshot(p_root: Path, label: str = "") -> dict:
                         entry["file"], entry["line"] = rel, d["line"]
                         from_modded.discard(d["name"])
                 entry["methods"].update(methods)
-    for path in _files(p_root / CONFIG_ROOT, "config.cpp"):
+    for path in _files(h.child_ci(p_root, CONFIG_ROOT), "config.cpp"):
         rel = path.relative_to(p_root).as_posix()
         try:
             decls = parse_config(path.read_text(encoding="utf-8", errors="replace"))
@@ -814,7 +814,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Snapshot vanilla DayZ classes and list mod classes a game update affects.")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--store", type=Path, default=STORE, help=f"Snapshot folder (default {STORE}).")
-    common.add_argument("--p-root", type=Path, default=P_DRIVE, help="Vanilla game data root (default P:\\).")
+    common.add_argument("--p-root", type=Path, default=P_DRIVE, help="Vanilla game data root (default %(default)s, the P: work drive).")
     sub = parser.add_subparsers(dest="command", required=True)
     snap_p = sub.add_parser("snapshot", parents=[common], help="Save a snapshot of the vanilla classes on P:\\.")
     snap_p.add_argument("--label", default="", help="Text added to the file name, for example the game version.")
