@@ -150,17 +150,35 @@ def resolve_addon_builder() -> Path:
 def build_addon_builder_cmd(
     addon_builder: Path, source: Path, target_dir: Path, modname: str, temp_dir: Path, clean: bool
 ) -> list[str]:
+    """The AddonBuilder argv. Paths are as AddonBuilder sees them: unchanged on
+    Windows, P:\\ or Z:\\ paths under Proton on Linux (h.to_wine_path)."""
     cmd = [
         str(addon_builder),
-        str(source),
-        str(target_dir),
+        h.to_wine_path(source, P_DRIVE),
+        h.to_wine_path(target_dir, P_DRIVE),
         f"-prefix={modname}",
-        f"-temp={temp_dir}",
-        f"-include={INCLUDE_LIST}",
+        f"-temp={h.to_wine_path(temp_dir, P_DRIVE)}",
+        f"-include={h.to_wine_path(INCLUDE_LIST, P_DRIVE)}",
     ]
     if clean:
         cmd.append("-clear")
     return cmd
+
+
+def run_addon_builder(cmd: list[str]) -> int:
+    """Run the build_addon_builder_cmd argv; returns AddonBuilder's exit code.
+
+    Windows: AddonBuilder writes straight to our stdout as it works. Linux: it
+    runs under Proton, which gives it its own console, so h.run_windows_tool
+    captures its output and it is printed here once it exits, still after the
+    [AddonBuilder] echo that /dayz-gate looks for. Raises h.ProtonError when
+    Proton cannot be found.
+    """
+    if h.IS_WINDOWS:
+        return subprocess.run(cmd).returncode
+    rc, output = h.run_windows_tool(cmd[0], cmd[1:])
+    print(output, end="" if output.endswith("\n") or not output else "\n")
+    return rc
 
 
 def exclude_patterns() -> list[str]:
@@ -357,12 +375,17 @@ def main() -> int:
     cmd = build_addon_builder_cmd(addon_builder, stage, target_dir, args.modname, temp_dir, args.clean)
     print()
     # list2cmdline quotes arguments with spaces (the default path holds "DayZ Tools"),
-    # so the echoed line can be pasted into a terminal and run as is.
+    # so on Windows the echoed line can be pasted into a terminal and run as is. On
+    # Linux it shows the AddonBuilder command as Proton runs it (P:\ and Z:\ paths),
+    # not a command a Linux shell can run.
     print(f"[AddonBuilder] {subprocess.list2cmdline(cmd)}")
     print()
     sys.stdout.flush()  # our lines land before AddonBuilder takes over stdout
     build_started = time.time()
-    rc = subprocess.run(cmd).returncode
+    try:
+        rc = run_addon_builder(cmd)
+    except (h.ProtonError, OSError) as e:
+        sys.exit(f"{FAIL} Could not start AddonBuilder: {e}")
 
     print()
     if rc != 0:

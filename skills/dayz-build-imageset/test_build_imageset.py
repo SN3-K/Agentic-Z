@@ -1,6 +1,7 @@
 """Tests for the atlas packing logic in build_imageset.py (no Pillow or DayZ Tools needed)."""
 import importlib.util
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,14 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 bi = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(bi)
+pe = sys.modules["platform_env"]  # loaded by build_imageset through skill_helpers
+
+
+@pytest.fixture(autouse=True)
+def image_to_paa_runs_directly(monkeypatch):
+    """The tests fake subprocess.run, which is how ImageToPAA runs on Windows.
+    The Proton tests at the end switch back to Linux with _linux()."""
+    monkeypatch.setattr(bi.h, "IS_WINDOWS", True)
 
 GAP = bi.GAP
 
@@ -729,3 +738,72 @@ def test_main_skips_dot_folders_in_gui_sources(monkeypatch, tmp_path):
     (mod / ".gui-sources" / ".git").mkdir()
     calls = _run_main(monkeypatch, tmp_path, [str(mod)])  # asserts exit 0
     assert [c[0].name for c in calls] == ["icons"]
+
+
+# --- ImageToPAA under Proton (Linux) ---------------------------------------------
+
+def _linux(monkeypatch, tmp_path, fake_tool):
+    """Switch to the Linux branch with h.run_windows_tool faked; returns the list of its calls.
+
+    fake_tool(args, stage_dir) gets the staging folder build_one converts into.
+    """
+    monkeypatch.setattr(bi.h, "IS_WINDOWS", False)
+    monkeypatch.setattr(pe, "IS_WINDOWS", False)
+    monkeypatch.setattr(pe, "p_root", lambda: tmp_path / "P")  # tmp_path is outside P, so its paths become Z: paths
+    calls = []
+
+    def run_windows_tool(exe, args, **kwargs):
+        calls.append((exe, args))
+        out_dir = tmp_path / "gui" / "imagesets"
+        return fake_tool(args, next(d for d in out_dir.iterdir() if d.is_dir()))
+
+    monkeypatch.setattr(bi.h, "run_windows_tool", run_windows_tool)
+    return calls
+
+
+def _no_direct_run(cmd, n):
+    pytest.fail("ran the .exe directly on Linux")
+
+
+def test_linux_atlas_converts_through_proton_with_z_paths(monkeypatch, tmp_path, capsys):
+    def fake_tool(args, stage_dir):
+        (stage_dir / "icons.paa").write_bytes(b"new paa")
+        return 0, "ImageToPAA: converted\n"
+
+    calls = _linux(monkeypatch, tmp_path, fake_tool)
+    ok, out_dir, _ = _real_build(monkeypatch, tmp_path, _no_direct_run)
+    assert ok is True
+    [(exe, args)] = calls
+    assert exe == Path("ImageToPAA.exe")
+    assert args[0].startswith("Z:\\") and args[0].endswith("\\icons.png")
+    assert args[1].startswith("Z:\\") and args[1].endswith("\\icons.paa")
+    assert "ImageToPAA: converted" in capsys.readouterr().out
+    assert (out_dir / "icons.paa").read_bytes() == b"new paa"
+    # The .imageset still names the texture by its path inside the mod.
+    assert 'path "MyMod\\gui\\imagesets\\icons.paa"' in (out_dir / "icons.imageset").read_text()
+    _assert_no_staging_left(out_dir)
+
+
+def test_linux_atlas_failure_reports_exit_code_and_keeps_old_outputs(monkeypatch, tmp_path, capsys):
+    _linux(monkeypatch, tmp_path, lambda args, stage_dir: (1, "cannot read icons.png"))
+    ok, out_dir, _ = _real_build(monkeypatch, tmp_path, _no_direct_run)
+    assert ok is False
+    captured = capsys.readouterr()
+    assert "cannot read icons.png" in captured.out
+    assert "ImageToPAA exited 1 on icons" in captured.err
+    assert (out_dir / "icons.paa").read_bytes() == b"old"
+    _assert_no_staging_left(out_dir)
+
+
+def test_linux_atlas_without_proton_gives_the_hint(monkeypatch, tmp_path, capsys):
+    def no_proton(args, stage_dir):
+        raise bi.h.ProtonError("no Proton found for DayZ Tools. Set DAYZ_PROTON to a Proton folder.")
+
+    _linux(monkeypatch, tmp_path, no_proton)
+    ok, out_dir, _ = _real_build(monkeypatch, tmp_path, _no_direct_run)
+    assert ok is False
+    err = capsys.readouterr().err
+    assert "Could not start ImageToPAA on icons: no Proton found" in err and "DAYZ_PROTON" in err
+    assert (out_dir / "icons.paa").read_bytes() == b"old"
+    assert (out_dir / "icons.imageset").read_bytes() == b"old"
+    _assert_no_staging_left(out_dir)

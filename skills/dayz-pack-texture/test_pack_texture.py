@@ -1,6 +1,7 @@
 """Tests for input validation in pack_texture.py (no DayZ Tools needed)."""
 import importlib.util
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,14 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 pt = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(pt)
+pe = sys.modules["platform_env"]  # loaded by pack_texture through skill_helpers
+
+
+@pytest.fixture(autouse=True)
+def image_to_paa_runs_directly(monkeypatch):
+    """The tests fake subprocess.run, which is how ImageToPAA runs on Windows.
+    The Proton tests at the end switch back to Linux with _linux()."""
+    monkeypatch.setattr(pt.h, "IS_WINDOWS", True)
 
 
 def _png(width, height):
@@ -672,3 +681,72 @@ def test_check_unique_outputs_reports_every_collision(tmp_path):
     )
     assert len(errors) == (2 if os.name == "nt" else 1)
     assert "a_co.png and a_co.tga would both write a_co.paa" in errors[0]
+
+
+# --- ImageToPAA under Proton (Linux) ---------------------------------------------
+
+def _linux(monkeypatch, tmp_path, fake_tool):
+    """Switch to the Linux branch with h.run_windows_tool faked; returns the list of its calls."""
+    monkeypatch.setattr(pt.h, "IS_WINDOWS", False)
+    monkeypatch.setattr(pe, "IS_WINDOWS", False)
+    monkeypatch.setattr(pe, "p_root", lambda: tmp_path / "P")  # tmp_path is outside P, so its paths become Z: paths
+    monkeypatch.setattr(pt.subprocess, "run", lambda *a, **k: pytest.fail("ran the .exe directly on Linux"))
+    calls = []
+
+    def run_windows_tool(exe, args, **kwargs):
+        calls.append((exe, args))
+        return fake_tool(exe, args)
+
+    monkeypatch.setattr(pt.h, "run_windows_tool", run_windows_tool)
+    return calls
+
+
+def test_linux_pack_one_runs_through_proton_with_z_paths(monkeypatch, tmp_path, capsys):
+    src = tmp_path / "vest_co.png"
+    src.write_bytes(b"")
+
+    def fake_tool(exe, args):
+        (tmp_path / "vest_co.paa").write_bytes(b"paa")
+        return 0, "ImageToPAA: converted\n"
+
+    calls = _linux(monkeypatch, tmp_path, fake_tool)
+    assert pt.pack_one(tmp_path / "ImageToPAA.exe", src) is True
+    [(exe, args)] = calls
+    assert exe == tmp_path / "ImageToPAA.exe"
+    assert args[0].startswith("Z:\\") and args[0].endswith("\\vest_co.png")
+    assert args[1].startswith("Z:\\") and args[1].endswith("\\vest_co.paa")
+    assert "ImageToPAA: converted" in capsys.readouterr().out
+
+
+def test_linux_pack_one_reports_exit_code_and_restores_the_old_paa(monkeypatch, tmp_path, capsys):
+    src = tmp_path / "vest_co.png"
+    src.write_bytes(b"")
+    dst = tmp_path / "vest_co.paa"
+    dst.write_bytes(b"old paa")
+
+    def fake_tool(exe, args):
+        dst.write_bytes(b"half")
+        return 2, "cannot read vest_co.png"
+
+    _linux(monkeypatch, tmp_path, fake_tool)
+    assert pt.pack_one(tmp_path / "ImageToPAA.exe", src) is False
+    captured = capsys.readouterr()
+    assert "cannot read vest_co.png" in captured.out
+    assert "ImageToPAA exited 2 on vest_co.png" in captured.err
+    assert dst.read_bytes() == b"old paa"
+
+
+def test_linux_pack_one_without_proton_gives_the_hint(monkeypatch, tmp_path, capsys):
+    src = tmp_path / "vest_co.png"
+    src.write_bytes(b"")
+    dst = tmp_path / "vest_co.paa"
+    dst.write_bytes(b"old paa")
+
+    def no_proton(exe, args):
+        raise pt.h.ProtonError("no Proton found for DayZ Tools. Set DAYZ_PROTON to a Proton folder.")
+
+    _linux(monkeypatch, tmp_path, no_proton)
+    assert pt.pack_one(tmp_path / "ImageToPAA.exe", src) is False
+    err = capsys.readouterr().err
+    assert "Could not start ImageToPAA on vest_co.png: no Proton found" in err and "DAYZ_PROTON" in err
+    assert dst.read_bytes() == b"old paa"

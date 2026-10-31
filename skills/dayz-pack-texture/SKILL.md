@@ -47,6 +47,10 @@ python "<skill-dir>\pack_texture.py" [--dry-run] <input1> [<input2> ...]
 4. With `--dry-run`, list what would be written and stop with exit code 0. Otherwise, for each input, copy any existing `.paa` to `<name>.paa.bak` (through a temporary file, so a failed copy leaves the previous backup intact; a `[WARN]` line counts any numbered backups from older releases), then invoke `ImageToPAA.exe <input> <output.paa>`. If the backup copy itself fails, that input is skipped and the existing `.paa` is left untouched. Streams the tool's output live. A conversion counts as failed if the tool exits non-zero, if no `.paa` appears, or if an existing `.paa` was left unchanged (its modification time did not move), so a stale file from an earlier run is never reported as packed. On a failure the backup is copied back over the `.paa` (and kept), or, when there was no `.paa` before, any partial file the failed run wrote is removed; each step is printed. If that undo fails, a `[FAIL]` line names the file to copy back by hand.
 5. Report a summary of successes and failures. Exit non-zero if any failed.
 
+## On Linux
+
+`ImageToPAA.exe` runs under Steam Proton in the DayZ Tools prefix, with the Proton Steam uses for DayZ Tools or the folder in `DAYZ_PROTON`, and the Steam Linux Runtime that Proton names (installed from the Steam library). `/dayz-preflight` prints both as `Host:` lines. The input and output go to ImageToPAA as `P:\...` (inside the P folder) or `Z:\...`, and its output is printed when it exits, not live. A path containing `%`, `"` or a line break is refused (Wine's `cmd` cannot pass them); non-ASCII works. If Proton cannot be found, the pack prints `[FAIL] Could not start ImageToPAA on <file>: <reason>` and restores any backup like any other failed conversion.
+
 ## Refuses to run if
 
 - `/dayz-preflight` returns non-zero (with `--dry-run`: `P:\` is not mounted).
@@ -67,7 +71,7 @@ Preflight complete.
 [OK]   ImageToPAA: C:\...\DayZ Tools\Bin\ImageToPAA\ImageToPAA.exe
 
 [Pack] vest_camo_co.png  ->  vest_camo_co.paa
-... (ImageToPAA output) ...
+... (ImageToPAA output; on Linux printed when it exits) ...
 [OK]   Wrote vest_camo_co.paa (123,456 bytes)
 
 [Pack] vest_camo_nohq.png  ->  vest_camo_nohq.paa

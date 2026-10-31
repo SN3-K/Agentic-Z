@@ -42,6 +42,15 @@ python "<skill-dir>\build.py" <ModName> [--clean]
 14. **Signature check** - AddonBuilder does not sign, so any `<ModName>.pbo.*.bisign` already in `Addons\` was made for an earlier PBO. Each one gets a `[WARN]`: re-sign the new PBO with `DayZ Tools\Bin\DsUtils\DSSignFile.exe`, or delete the old signature.
 15. **Cleanup** - removes `P:\temp\<ModName>\` and the stage on success. On failure it keeps both and prints both paths for debugging.
 
+## On Linux
+
+`AddonBuilder.exe` runs under Steam Proton in the DayZ Tools prefix. Proton is the one Steam uses for DayZ Tools (its compatibility setting, else the version that last ran the prefix); `DAYZ_PROTON` points at a Proton folder to use instead. The Steam Linux Runtime that Proton's `toolmanifest.vdf` names (for example `SteamLinuxRuntime_sniper`) must be installed from the Steam library. `/dayz-preflight` prints which Proton and runtime it found as `Host:` lines.
+
+- AddonBuilder gets its paths as `P:\...` (inside the P folder) or `Z:\...` (anywhere else), so the `[AddonBuilder]` line shows those paths. It is not a command a Linux shell can run.
+- Its output is printed when it exits, not live, after the `[AddonBuilder]` line.
+- A path or argument that contains `%`, `"` or a line break is refused, because Wine's `cmd` cannot pass it on. Non-ASCII characters work.
+- If Proton, its runtime or the DayZ Tools prefix cannot be found, the build prints `[FAIL] Could not start AddonBuilder: <reason>` and exits 1.
+
 ## include.lst
 
 `include.lst` (next to `build.py`) is passed to AddonBuilder as `-include=`. It is one line of `;`-separated wildcard patterns naming the file types AddonBuilder copies into the PBO: scripts, configs, layouts, models, textures, materials, sounds, and data files such as `.json`, `.xml`, `.csv` and `.txt`. A file whose extension is not listed is silently left out of the PBO. If your mod ships another file type, add its pattern to that line.
@@ -87,7 +96,7 @@ Preflight complete.
 
 [AddonBuilder] "C:\...\DayZ Tools\Bin\AddonBuilder\AddonBuilder.exe" P:\temp\_stage\MyMod P:\Mods\@MyMod\Addons -prefix=MyMod -temp=P:\temp\MyMod -include=...\include.lst
 
-... AddonBuilder's own output, streamed live ...
+... AddonBuilder's own output, streamed live (on Linux: printed when it exits) ...
 
 [OK]    Built: P:\Mods\@MyMod\Addons\MyMod.pbo (12,345 bytes)
 [OK]    Cleaned temp and stage dirs

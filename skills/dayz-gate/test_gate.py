@@ -842,3 +842,65 @@ def test_argparse_errors_still_print_error_first_line(argv, capsys):
     assert out[0] == "ERROR"
     if "--json" in argv:
         assert json.loads("\n".join(out[1:]))["verdict"] == "ERROR"
+
+
+# --- visual helper packing (AddonBuilder) ------------------------------------------
+
+def _helper_tools(tmp_path, monkeypatch):
+    """A fake DayZ Tools root and P root for install_visual_helper; returns (P root, AddonBuilder path)."""
+    p_drive = tmp_path / "P"
+    tools = tmp_path / "DayZ Tools"
+    monkeypatch.setattr(gate, "P_DRIVE", p_drive)
+    monkeypatch.setattr(gate.h.preflight, "find_dayz_tools", lambda: tools)
+    return p_drive, tools / "Bin" / "AddonBuilder" / "AddonBuilder.exe"
+
+
+def _linux(monkeypatch):
+    monkeypatch.setattr(gate.h, "IS_WINDOWS", False)
+    monkeypatch.setattr(sys.modules["platform_env"], "IS_WINDOWS", False)
+    monkeypatch.setattr(gate.subprocess, "run", lambda *a, **k: pytest.fail("ran the .exe directly on Linux"))
+
+
+def test_visual_helper_packs_through_proton_with_p_paths_on_linux(tmp_path, monkeypatch):
+    p_drive, addon_builder = _helper_tools(tmp_path, monkeypatch)
+    _linux(monkeypatch)
+    calls = []
+
+    def run_windows_tool(exe, args, **kwargs):
+        calls.append((exe, args))
+        (p_drive / "Mods" / "@AZ_VisualHelper" / "Addons" / "AZ_VisualHelper.pbo").write_bytes(b"pbo")
+        return 0, "packed"
+
+    monkeypatch.setattr(gate.h, "run_windows_tool", run_windows_tool)
+    gate.install_visual_helper()
+    assert calls == [(str(addon_builder), [
+        "P:\\temp\\_azvisual\\AZ_VisualHelper", "P:\\Mods\\@AZ_VisualHelper\\Addons", "-prefix=AZ_VisualHelper",
+        "-temp=P:\\temp\\_azvisual\\tmp", "-packonly",
+    ])]
+
+
+def test_visual_helper_pack_failure_on_linux_quotes_exit_code_and_output(tmp_path, monkeypatch):
+    _helper_tools(tmp_path, monkeypatch)
+    _linux(monkeypatch)
+    monkeypatch.setattr(gate.h, "run_windows_tool", lambda exe, args, **k: (4, "[FATAL] no stage"))
+    with pytest.raises(gate.visual.VisualError, match=r"AddonBuilder exit 4\): \[FATAL\] no stage"):
+        gate.install_visual_helper()
+
+
+def test_visual_helper_without_proton_is_a_gate_error_with_the_hint(tmp_path, monkeypatch):
+    _helper_tools(tmp_path, monkeypatch)
+    _linux(monkeypatch)
+
+    def no_proton(exe, args, **kwargs):
+        raise gate.h.ProtonError("no Proton found for DayZ Tools. Set DAYZ_PROTON to a Proton folder.")
+
+    monkeypatch.setattr(gate.h, "run_windows_tool", no_proton)
+    with pytest.raises(gate.GateError, match="cannot run AddonBuilder.*no Proton found.*DAYZ_PROTON"):
+        gate.install_visual_helper()
+
+
+def test_windows_tools_run_directly_on_windows(monkeypatch):
+    monkeypatch.setattr(gate.h, "IS_WINDOWS", True)
+    monkeypatch.setattr(gate.h, "run_windows_tool", lambda *a, **k: pytest.fail("used Proton on Windows"))
+    monkeypatch.setattr(gate, "run_captured", lambda cmd: (0, " ".join(cmd)))
+    assert gate.run_windows_captured(["AddonBuilder.exe", "P:\\x"]) == (0, "AddonBuilder.exe P:\\x")

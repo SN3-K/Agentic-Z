@@ -111,7 +111,11 @@ def install_visual_helper() -> None:
     if tools is None:
         raise GateError("DayZ Tools not found, so the visual helper mod cannot be packed. Run /dayz-preflight.")
     addon_builder = tools / "Bin" / "AddonBuilder" / "AddonBuilder.exe"
-    visual.install_helper(P_DRIVE, addon_builder, h.SCAFFOLD_MARKER, run_captured)
+    try:
+        visual.install_helper(P_DRIVE, addon_builder, h.SCAFFOLD_MARKER, run_windows_captured,
+                              lambda path: h.to_wine_path(path, P_DRIVE))
+    except h.ProtonError as e:
+        raise GateError(f"cannot run AddonBuilder to pack the visual helper mod: {e}") from e
 
 
 def remove_visual_helper() -> None:
@@ -141,6 +145,17 @@ def run_captured(cmd: list[str]) -> tuple[int, str]:
         rc = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL).returncode
         out.seek(0)
         return rc, out.read().decode("utf-8", errors="replace")
+
+
+def run_windows_captured(cmd: list[str]) -> tuple[int, str]:
+    """run_captured for a Windows program (cmd[0] is its .exe).
+
+    On Linux it runs under Proton through h.run_windows_tool, which captures the
+    output itself; raises h.ProtonError when Proton cannot be found.
+    """
+    if h.IS_WINDOWS:
+        return run_captured(cmd)
+    return h.run_windows_tool(cmd[0], cmd[1:])
 
 
 def parse_tasklist(output: str, pid: Optional[int] = None) -> list[int]:

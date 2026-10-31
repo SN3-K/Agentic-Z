@@ -14,6 +14,11 @@ _spec = importlib.util.spec_from_file_location("dayz_build_pbo_under_test", HERE
 build = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(build)
 h = build.h
+import platform_env as pe  # noqa: E402  (build.py put skills/_shared on sys.path)
+
+_gate_spec = importlib.util.spec_from_file_location("dayz_gate_for_build_tests", HERE.parent / "dayz-gate" / "gate.py")
+gate = importlib.util.module_from_spec(_gate_spec)
+_gate_spec.loader.exec_module(gate)
 
 
 @pytest.fixture
@@ -129,7 +134,7 @@ def test_build_cmd_includes_include_list_and_clear(tmp_path):
     cmd = build.build_addon_builder_cmd(
         Path("AB.exe"), Path("P:/MyMod"), Path("P:/Mods/@MyMod/Addons"), "MyMod", Path("P:/temp/MyMod"), clean=True
     )
-    assert f"-include={build.INCLUDE_LIST}" in cmd
+    assert f"-include={h.to_wine_path(build.INCLUDE_LIST, build.P_DRIVE)}" in cmd
     assert "-prefix=MyMod" in cmd
     assert cmd[-1] == "-clear"
     assert "-clear" not in build.build_addon_builder_cmd(
@@ -333,6 +338,7 @@ def test_failed_first_build_does_not_block_the_rebuild(p_drive, tmp_path, monkey
     monkeypatch.setattr(build, "verify_junction", lambda m, w: None)
     monkeypatch.setattr(build, "resolve_addon_builder", lambda: Path("AB.exe"))
     monkeypatch.setattr("sys.argv", ["build.py", "MyMod"])
+    monkeypatch.setattr(h, "IS_WINDOWS", True)  # AddonBuilder streams through subprocess.run
 
     monkeypatch.setattr(build.subprocess, "run", lambda cmd: build.subprocess.CompletedProcess(cmd, 3))
     assert build.main() == 3
@@ -362,6 +368,7 @@ def test_echoed_addonbuilder_command_is_quoted(p_drive, tmp_path, monkeypatch, c
     monkeypatch.setattr(build, "verify_junction", lambda m, w: None)
     monkeypatch.setattr(build, "resolve_addon_builder", lambda: exe)
     monkeypatch.setattr("sys.argv", ["build.py", "MyMod"])
+    monkeypatch.setattr(h, "IS_WINDOWS", True)  # AddonBuilder streams through subprocess.run
     ran = []
 
     def fake_run(cmd):
@@ -374,6 +381,89 @@ def test_echoed_addonbuilder_command_is_quoted(p_drive, tmp_path, monkeypatch, c
     line = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("[AddonBuilder] "))
     assert line == "[AddonBuilder] " + build.subprocess.list2cmdline(ran[0])
     assert f'"{exe}"' in line
+
+
+# --- AddonBuilder under Proton (Linux) --------------------------------------
+
+def _linux(monkeypatch):
+    monkeypatch.setattr(h, "IS_WINDOWS", False)
+    monkeypatch.setattr(pe, "IS_WINDOWS", False)
+
+
+def test_build_cmd_uses_wine_paths_on_linux(p_drive, monkeypatch):
+    _linux(monkeypatch)
+    cmd = build.build_addon_builder_cmd(
+        Path("/steam/DayZ Tools/AddonBuilder.exe"), p_drive / "temp" / "_stage" / "MyMod",
+        p_drive / "Mods" / "@MyMod" / "Addons", "MyMod", p_drive / "temp" / "MyMod", clean=False,
+    )
+    assert cmd[:3] == [str(Path("/steam/DayZ Tools/AddonBuilder.exe")), "P:\\temp\\_stage\\MyMod", "P:\\Mods\\@MyMod\\Addons"]
+    assert "-temp=P:\\temp\\MyMod" in cmd
+    include = next(a for a in cmd if a.startswith("-include="))
+    assert include.startswith("-include=Z:\\") and include.endswith("\\include.lst")  # the repo is outside P
+
+
+def _linux_main(p_drive, tmp_path, monkeypatch, fake_tool):
+    """Run build.main() as on Linux with h.run_windows_tool faked; returns (exit code, the faked calls)."""
+    _linux(monkeypatch)
+    project = tmp_path / "proj"
+    _scaffold(project)
+    monkeypatch.setattr(build, "TEMP_ROOT", p_drive / "temp")
+    monkeypatch.setattr(build.h, "resolve_project_dir", lambda: project)
+    monkeypatch.setattr(build.h, "gate_on_preflight", lambda: None)
+    monkeypatch.setattr(build, "gate_on_lint", lambda *a: None)
+    monkeypatch.setattr(build, "validate_p_mods", lambda: None)
+    monkeypatch.setattr(build, "verify_junction", lambda m, w: None)
+    monkeypatch.setattr(build, "resolve_addon_builder", lambda: Path("/steam/AddonBuilder.exe"))
+    monkeypatch.setattr(build.subprocess, "run", lambda *a, **k: pytest.fail("ran the .exe directly on Linux"))
+    monkeypatch.setattr("sys.argv", ["build.py", "MyMod"])
+    calls = []
+
+    def run_windows_tool(exe, args, **kwargs):
+        calls.append((exe, args))
+        return fake_tool(exe, args)
+
+    monkeypatch.setattr(h, "run_windows_tool", run_windows_tool)
+    return build.main(), calls
+
+
+def test_linux_build_prints_addonbuilder_output_after_the_echo(p_drive, tmp_path, monkeypatch, capsys):
+    def fake_tool(exe, args):
+        (p_drive / "Mods" / "@MyMod" / "Addons" / "MyMod.pbo").write_bytes(b"pbo")
+        return 0, "Packing MyMod\nError: In File P:\\MyMod\\config.cpp: Line 3 bad\n"
+
+    rc, calls = _linux_main(p_drive, tmp_path, monkeypatch, fake_tool)
+    assert rc == 0
+    exe, args = calls[0]
+    assert exe == str(Path("/steam/AddonBuilder.exe"))
+    assert args[:2] == ["P:\\temp\\_stage\\MyMod", "P:\\Mods\\@MyMod\\Addons"]
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    echo = next(i for i, l in enumerate(lines) if l.startswith("[AddonBuilder] "))
+    assert lines[echo] == "[AddonBuilder] " + build.subprocess.list2cmdline([exe, *args])
+    assert lines.index("Packing MyMod") > echo
+    # /dayz-gate reads build.py's stdout: the captured AddonBuilder lines must count as AddonBuilder output.
+    findings = gate.parse_build_output(out)
+    assert [f["category"] for f in findings] == ["build_error"]
+    assert findings[0]["points_to"] == ["P:\\MyMod\\config.cpp"]
+
+
+def test_linux_build_propagates_addonbuilder_exit_code(p_drive, tmp_path, monkeypatch, capsys):
+    rc, _ = _linux_main(p_drive, tmp_path, monkeypatch, lambda exe, args: (5, "[FATAL] boom"))
+    out = capsys.readouterr().out
+    assert rc == 5
+    assert "[FATAL] boom" in out
+    assert f"{build.FAIL} AddonBuilder exited 5" in out
+
+
+def test_linux_build_without_proton_fails_with_the_hint(p_drive, tmp_path, monkeypatch):
+    def no_proton(exe, args):
+        raise h.ProtonError("no Proton found for DayZ Tools. Set DAYZ_PROTON to a Proton folder.")
+
+    with pytest.raises(SystemExit) as exc:
+        _linux_main(p_drive, tmp_path, monkeypatch, no_proton)
+    message = str(exc.value.code)
+    assert message.startswith(f"{build.FAIL} Could not start AddonBuilder: no Proton found")
+    assert "DAYZ_PROTON" in message
 
 
 # --- /dayz-lint gate -------------------------------------------------------
@@ -594,6 +684,7 @@ def _main_env(p_drive, tmp_path, monkeypatch, run):
     monkeypatch.setattr(build, "verify_junction", lambda m, w: None)
     monkeypatch.setattr(build, "resolve_addon_builder", lambda: Path("AB.exe"))
     monkeypatch.setattr(build.subprocess, "run", run)
+    monkeypatch.setattr(h, "IS_WINDOWS", True)  # AddonBuilder streams through subprocess.run
     monkeypatch.setattr("sys.argv", ["build.py", "MyMod"])
     return p_drive / "Mods" / "@MyMod"
 

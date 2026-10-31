@@ -190,6 +190,21 @@ def write_imageset_file(path: Path, set_name: str, atlas_w: int, atlas_h: int,
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def run_image_to_paa(image_to_paa: Path, src: Path, dst: Path) -> int:
+    """Run ImageToPAA src dst; returns its exit code.
+
+    Windows: its output streams to this console. Linux: it runs under Proton,
+    which gives it its own console, so h.run_windows_tool captures the output
+    and it is printed here once it exits. Raises h.ProtonError when Proton
+    cannot be found.
+    """
+    if h.IS_WINDOWS:
+        return subprocess.run([str(image_to_paa), str(src), str(dst)]).returncode
+    rc, output = h.run_windows_tool(image_to_paa, [h.to_wine_path(src), h.to_wine_path(dst)])
+    print(output, end="" if output.endswith("\n") or not output else "\n")
+    return rc
+
+
 def write_one_atlas(stem: str, atlas_w: int, atlas_h: int, placed,
                     mod_name: str, stage_dir: Path, image_to_paa: Path) -> bool:
     """Compose and convert one atlas, writing <stem>.paa and <stem>.imageset into `stage_dir`.
@@ -206,10 +221,15 @@ def write_one_atlas(stem: str, atlas_w: int, atlas_h: int, placed,
     paa_path = stage_dir / f"{stem}.paa"
     temp_png = stage_dir / f"{stem}.png"
     atlas.save(temp_png, "PNG")
-    result = subprocess.run([str(image_to_paa), str(temp_png), str(paa_path)])
-    temp_png.unlink()
-    if result.returncode != 0:
-        print(f"{FAIL} ImageToPAA exited {result.returncode} on {stem}", file=sys.stderr)
+    try:
+        rc = run_image_to_paa(image_to_paa, temp_png, paa_path)
+    except (h.ProtonError, OSError) as e:
+        print(f"{FAIL} Could not start ImageToPAA on {stem}: {e}", file=sys.stderr)
+        return False
+    finally:
+        temp_png.unlink()
+    if rc != 0:
+        print(f"{FAIL} ImageToPAA exited {rc} on {stem}", file=sys.stderr)
         return False
     if not paa_path.is_file():
         print(f"{FAIL} ImageToPAA reported success but wrote no {stem}.paa", file=sys.stderr)

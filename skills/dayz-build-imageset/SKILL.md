@@ -74,6 +74,10 @@ python "<skill-dir>\build_imageset.py" <mod-root> [--mod-name <name>] [--dry-run
 5. Look for orphans: `.imageset` files in `gui/imagesets/` whose stem is neither a current set name nor `<set>_N` of one (ignoring case), left behind when a set folder was deleted or renamed. `/dayz-build-pbo` would keep packing their sprites. Only files this skill wrote count: the `.imageset` must start with `ImageSetClass {`, carry `Name "<stem>"` and point at `...\gui\imagesets\<stem>.paa`, so hand-made or vanilla-style imagesets (which use `Gui/imagesets/....edds`, as at `P:\gui\imagesets\playstation_buttons2.imageset:7`) are never touched. Each orphan `.imageset` and its `<stem>.paa` are reported with a `[WARN]`, or deleted with `--prune`. This also runs when `.gui-sources/` has no set folders left, before that run fails.
 6. Report a summary; exit non-zero if any imageset failed. Orphans alone do not change the exit code.
 
+## On Linux
+
+`ImageToPAA.exe` runs under Steam Proton in the DayZ Tools prefix, with the Proton Steam uses for DayZ Tools or the folder in `DAYZ_PROTON`, and the Steam Linux Runtime that Proton names (installed from the Steam library). `/dayz-preflight` prints both as `Host:` lines. The atlas PNG and `.paa` go to ImageToPAA as `P:\...` (inside the P folder) or `Z:\...`, and its output is printed when it exits, not live. A path containing `%`, `"` or a line break is refused (Wine's `cmd` cannot pass them); non-ASCII works. If Proton cannot be found, that atlas fails with `[FAIL] Could not start ImageToPAA on <set>: <reason>`, and the other sets still build.
+
 ## Generated `.imageset` format
 
 ```

@@ -267,6 +267,21 @@ def undo_failed_pack(dst: Path, bak: Path | None) -> None:
         print(f"{h.FAIL} Could not undo the failed run ({e.strerror or e}); {todo} by hand", file=sys.stderr)
 
 
+def run_image_to_paa(image_to_paa: Path, src: Path, dst: Path) -> int:
+    """Run ImageToPAA src dst; returns its exit code.
+
+    Windows: its output streams to this console. Linux: it runs under Proton,
+    which gives it its own console, so h.run_windows_tool captures the output
+    and it is printed here once it exits. Raises h.ProtonError when Proton
+    cannot be found.
+    """
+    if h.IS_WINDOWS:
+        return subprocess.run([str(image_to_paa), str(src), str(dst)]).returncode
+    rc, output = h.run_windows_tool(image_to_paa, [h.to_wine_path(src), h.to_wine_path(dst)])
+    print(output, end="" if output.endswith("\n") or not output else "\n")
+    return rc
+
+
 def pack_one(image_to_paa: Path, src: Path) -> bool:
     dst = src.with_suffix(".paa")
     print()
@@ -293,9 +308,14 @@ def pack_one(image_to_paa: Path, src: Path) -> bool:
         # mistaken for success because the old file is still there.
         before = dst.stat().st_mtime_ns
     sys.stdout.flush()
-    result = subprocess.run([str(image_to_paa), str(src), str(dst)])
-    if result.returncode != 0:
-        print(f"{h.FAIL} ImageToPAA exited {result.returncode} on {src.name}", file=sys.stderr)
+    try:
+        rc = run_image_to_paa(image_to_paa, src, dst)
+    except (h.ProtonError, OSError) as e:
+        print(f"{h.FAIL} Could not start ImageToPAA on {src.name}: {e}", file=sys.stderr)
+        undo_failed_pack(dst, bak)
+        return False
+    if rc != 0:
+        print(f"{h.FAIL} ImageToPAA exited {rc} on {src.name}", file=sys.stderr)
     elif not dst.exists():
         print(f"{h.FAIL} ImageToPAA reported success but {dst} is missing", file=sys.stderr)
     elif before is not None and dst.stat().st_mtime_ns == before:

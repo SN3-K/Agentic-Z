@@ -66,13 +66,16 @@ def helper_root(p_drive: Path) -> Path:
     return p_drive / "Mods" / f"@{HELPER_NAME}"
 
 
-def install_helper(p_drive: Path, addon_builder: Path, marker: str, run: Callable[[list[str]], tuple[int, str]]) -> Path:
+def install_helper(p_drive: Path, addon_builder: Path, marker: str, run: Callable[[list[str]], tuple[int, str]],
+                   tool_path: Callable[[Path], str] = str) -> Path:
     """Pack visual_helper/ into P:\\Mods\\@AZ_VisualHelper\\Addons\\AZ_VisualHelper.pbo.
 
     The source is copied to P:\\temp\\_azvisual\\ first, because AddonBuilder packs
     only from the work drive. The folder gets the ownership marker so
     remove_helper() and /dayz-clean-workspace may delete it. Raises VisualError
     when a folder of that name is not ours or the PBO was not written.
+    tool_path turns a path into the form AddonBuilder sees (P:\\... under
+    Proton on Linux).
     """
     root = helper_root(p_drive)
     if root.exists() and not _owned(root, marker):
@@ -84,8 +87,8 @@ def install_helper(p_drive: Path, addon_builder: Path, marker: str, run: Callabl
     addons = root / "Addons"
     addons.mkdir(parents=True, exist_ok=True)
     (root / marker).write_text(HELPER_NAME + "\n", encoding="utf-8")
-    cmd = [str(addon_builder), str(stage / HELPER_NAME), str(addons), f"-prefix={HELPER_NAME}",
-           f"-temp={stage / 'tmp'}", "-packonly"]
+    cmd = [str(addon_builder), tool_path(stage / HELPER_NAME), tool_path(addons), f"-prefix={HELPER_NAME}",
+           f"-temp={tool_path(stage / 'tmp')}", "-packonly"]
     rc, out = run(cmd)
     pbo = addons / f"{HELPER_NAME}.pbo"
     if rc != 0 or not pbo.is_file():
